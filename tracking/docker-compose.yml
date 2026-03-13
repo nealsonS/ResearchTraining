@@ -90,7 +90,7 @@ services:
           --serve-artifacts \
           --host "${MLFLOW_HOST}" \
           --port "${MLFLOW_PORT}" \
-          --allowed-hosts "localhost:5000,${TAILSCALE_DNS}:5000"
+          --allowed-hosts "localhost:${MLFLOW_PORT},${TAILSCALE_DNS}:${MLFLOW_PORT}"
     ports:
       - "${MLFLOW_PORT}:${MLFLOW_PORT}"
     healthcheck:
