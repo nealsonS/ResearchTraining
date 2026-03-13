@@ -90,7 +90,8 @@ services:
           --serve-artifacts \
           --host "${MLFLOW_HOST}" \
           --port "${MLFLOW_PORT}" \
-          --allowed-hosts "localhost:${MLFLOW_PORT},${TAILSCALE_DNS}:${MLFLOW_PORT}"
+          --allowed-hosts "localhost:${MLFLOW_PORT},${TAILSCALE_DNS}:${MLFLOW_PORT}" \
+          --cors-allowed-origins "http://localhost:${MLFLOW_PORT},http://127.0.0.1:${MLFLOW_PORT},http://${TAILSCALE_DNS}:${MLFLOW_PORT}"
     ports:
       - "${MLFLOW_PORT}:${MLFLOW_PORT}"
     healthcheck:
