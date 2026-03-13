@@ -3,6 +3,10 @@
 pip install --upgrade pip
 pip install uv
 
-uv venv .venv
+# python -m venv .venv
+uv python install 3.11
+uv venv --python 3.11
 source .venv/bin/activate
-pip install -r requirements
+
+uv pip install --upgrade --ignore-installed blinker
+uv pip install -r requirements.txt

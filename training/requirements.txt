@@ -1,2 +1,10 @@
-ultralytics
-albumentations
+torch
+torchmetrics[detection]
+torchvision
+transformers
+
+
+python-dotenv
+mlflow
+tqdm
+PyYAML
