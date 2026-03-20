@@ -8,3 +8,5 @@ python-dotenv
 mlflow
 tqdm
 PyYAML
+accelerate
+ipykernel
