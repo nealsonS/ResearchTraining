@@ -1,5 +1,7 @@
 import os
 import yaml
+import json
+import torch
 
 
 # -------------- CONFIG READINGS --------------
@@ -75,19 +77,68 @@ def normalize_label(label):
     return label
 
 
-def generate_dino_labels(labels: list[dict], id_to_name: dict[int:str]) -> str:
+def parse_output_to_json(output: str):
+    try:
+        boxes = json.loads(output.strip())
+        return boxes
+
+    except Exception:
+        return []
+
+
+def prepare_targets(label: list[dict]):
+    if len(label) == 0:
+        return [
+            {
+                "boxes": torch.empty((0, 4), dtype=torch.float32),
+                "labels": torch.empty((0,), dtype=torch.int64),
+            }
+        ]
+
+    return [
+        {
+            "boxes": torch.tensor([line["box"] for line in label], dtype=torch.float32),
+            "labels": torch.tensor(
+                [line["class_id"] for line in label], dtype=torch.int64
+            ),
+        }
+    ]
+
+
+# ------------- Label Generation --------------
+def generate_dino_labels(classes: list[str]) -> str:
     """For each label, generate the text prompt for each label"""
     text_prompt = ""
 
-    for label in labels:
-        if "class_id" not in label:
-            continue
-
-        cls = label["class_id"]
-        if cls not in id_to_name:
-            continue
-
-        cls_name = id_to_name[cls]
-        text_prompt += f"{cls_name}. "
+    for cls in classes:
+        text_prompt += f"{cls}. "
 
     return text_prompt.strip()
+
+
+def generate_qwen_prompt(classes: list[str]) -> str:
+    return f"""
+You are an object detection model.
+
+Detect all instances of the following classes in the image:
+{classes}
+
+Return ONLY a valid JSON array.
+
+Each element must be:
+[class_name, confidence, [x1, y1, x2, y2]]
+
+Rules:
+- Coordinates must be integers
+- Coordinates are in pixel space
+- (x1, y1) is top-left, (x2, y2) is bottom-right
+- confidence is a float between 0 and 1
+- Do not include any explanations or text outside JSON
+- If no objects are found, return []
+
+Example:
+[
+  ["amazon smile logo", 0.8, [12, 12, 30, 30]],
+  ["usps logo", 0.7, [50, 100, 70, 120]]
+]
+"""

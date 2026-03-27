@@ -1,3 +1,6 @@
+from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+import torch
+
 import os
 import yaml
 import json
@@ -6,7 +9,6 @@ from pathlib import Path
 import mlflow
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
 # from torchmetrics.detection import MeanAveragePrecision
 from dotenv import load_dotenv
@@ -19,7 +21,8 @@ from util.io import (
     load_yolo_labels,
     read_data_config,
     get_cls,
-    generate_dino_labels,
+    generate_qwen_prompt,
+    parse_output_to_json,
     prepare_targets,
 )
 
@@ -27,6 +30,7 @@ from util.metrics import evaluate_yolo_style, log_yolo_metrics_to_mlflow
 
 # ---------------- CONFIG ----------------
 load_dotenv()
+torch.manual_seed(1234)
 
 with open("./eval_config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
@@ -38,7 +42,7 @@ MODEL_ID = RUN_CONFIG["model_id"]
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
 
 CLASS_NAMES = get_cls(DATA_CONFIG, clean=True)
-TEXT_PROMPT = generate_dino_labels(CLASS_NAMES)
+TEXT_PROMPT = generate_qwen_prompt(CLASS_NAMES)
 
 RUN_CONFIG["CLASS_NAMES"] = CLASS_NAMES
 RUN_CONFIG["TEXT_PROMPT"] = TEXT_PROMPT
@@ -61,31 +65,69 @@ print(
 )
 
 
-def run_grounding_dino(image, processor, model):
-    inputs = processor(images=image, text=TEXT_PROMPT, return_tensors="pt").to(DEVICE)
+def run_qwen_inference(image: str, processor, model):
+    # mostly from https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+
+    message = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image,
+                },
+                {"type": "text", "text": TEXT_PROMPT},
+            ],
+        }
+    ]
+
+    # inputs = tokenizer(query, return_tensors="pt").to(DEVICE)
+    inputs = processor.apply_chat_template(
+        message,
+        tokenize=True,
+        add_generation_prompt=True,
+        return_dict=True,
+        return_tensors="pt",
+    ).to(model.device)
+
     with torch.no_grad():
-        outputs = model(**inputs)
-    results = processor.post_process_grounded_object_detection(
-        outputs,
-        threshold=CONF_THRESH,
-        target_sizes=[(image.height, image.width)],
+        generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :]
+        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
     )[0]
+    parsed = parse_output_to_json(output_text)
 
     boxes = []
-    scores = []
     labels = []
+    scores = []
 
-    for box, score, label in zip(
-        results["boxes"], results["scores"], results["labels"]
-    ):
+    for item in parsed:
+        if not isinstance(item, list) or len(item) != 3:
+            continue
+
+        label, score, box = item
         label = normalize_label(label)
 
         if label not in CLASS_TO_ID:
             continue
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            continue
 
-        boxes.append(box.detach().cpu())
-        scores.append(score.detach().cpu())
+        try:
+            box = [float(x) for x in box]
+            score = float(score)
+        except Exception:
+            continue
+
+        boxes.append(box)
         labels.append(CLASS_TO_ID[label])
+        scores.append(score)
 
     if len(boxes) == 0:
         return [
@@ -98,48 +140,65 @@ def run_grounding_dino(image, processor, model):
 
     return [
         {
-            "boxes": torch.stack(boxes).to(torch.float32),
-            "scores": torch.stack(scores).to(torch.float32),
+            "boxes": torch.tensor(boxes, dtype=torch.float32),
+            "scores": torch.tensor(scores, dtype=torch.float32),
             "labels": torch.tensor(labels, dtype=torch.int64),
         }
     ]
 
 
-# ----------------- MAIN ------------------
 def main():
+    """Main Function
+
+    1. Load dataset
+    2. Load model and processor
+    3. Generate output per image with text prompt
+    4. Parse output to JSON
+    5. Calculate metrics
+    """
     image_paths = []
     for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
         image_paths.extend(glob.glob(os.path.join(IMAGE_DIR, ext)))
     image_paths = sorted(image_paths)
     RUN_CONFIG["valid_images"] = len(image_paths)
+
     print(json.dumps(RUN_CONFIG, indent=4))
+    # tokenizer = AutoTokenizer.from_pretrained(
+    #     RUN_CONFIG["model_id"], trust_remote_code=True
+    # )
 
-    # lots of help from https://huggingface.co/docs/transformers/model_doc/grounding-dino#usage-tips
-    processor = AutoProcessor.from_pretrained(MODEL_ID)
-    model = (
-        AutoModelForZeroShotObjectDetection.from_pretrained(MODEL_ID).to(DEVICE).eval()
-    )
+    # model = (
+    #     AutoModelForCausalLM.from_pretrained(
+    #         RUN_CONFIG["model_id"], trust_remote_code=True, bf16=True
+    #     )
+    #     .to(DEVICE)
+    #     .eval()
+    # )
 
-    # prediction metrics
-    # metrics = MeanAveragePrecision(iou_type="bbox", class_metrics=True)
-    all_preds = []
-    all_targets = []
+    model = Qwen3VLForConditionalGeneration.from_pretrained(
+        RUN_CONFIG["model_id"],
+        dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+        device_map=DEVICE,
+        trust_remote_code=True,
+    ).eval()
 
+    processor = AutoProcessor.from_pretrained(RUN_CONFIG["model_id"])
+
+    all_preds, all_targets = [], []
     with mlflow.start_run():
         mlflow.log_params(RUN_CONFIG)
         for img_path in tqdm(image_paths):
-            img_path = Path(img_path)
-
+            # img_path = Path(img_path)
             image = Image.open(img_path).convert("RGB")
             label_path = os.path.join(
                 LABEL_DIR, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
             )
             label = load_yolo_labels(label_path, image.width, image.height)
 
-            pred = run_grounding_dino(image, processor, model)[0]
+            pred = run_qwen_inference(img_path, processor, model)[0]
             target = prepare_targets(label)[0]
 
-            # metrics.update(pred, target)
             all_preds.append(pred)
             all_targets.append(target)
 
