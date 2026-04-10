@@ -11,3 +11,5 @@ tqdm
 PyYAML
 accelerate
 ipykernel
+requests[socks]
+httpx[socks]

@@ -13,3 +13,10 @@
 
 # Training scripts
 - Then run the script
+
+## Runpod Caveats
+- Check CUDA version using `nvidia-smi` and install torch version that matches cuda version
+  - add to the requirements.txt
+  - for example: `pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu128`
+- Since Runpod's tailscale is in userspace networking mode, need to route to proxy server first
+  - Run `export ALL_PROXY=socks5h://127.0.0.1:1055`
