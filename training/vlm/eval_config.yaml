@@ -6,3 +6,5 @@ model_id: "Qwen/Qwen3-VL-2B-Instruct"
 conf_thresh: 0.5
 
 experiment_name: "VLM Inference"
+
+store_images_and_pred: false

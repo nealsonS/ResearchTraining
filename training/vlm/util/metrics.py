@@ -4,6 +4,10 @@ from torchvision.ops import box_iou
 import json
 import pandas as pd
 import mlflow
+import tempfile
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+import os
 
 
 def compute_ap(recall: np.ndarray, precision: np.ndarray) -> float:
@@ -290,3 +294,177 @@ def log_yolo_metrics_to_mlflow(summary, class_names, map_label="mAP50-95"):
 
     # optional: also log plain dict/json
     mlflow.log_dict(rows, "metrics/per_class_metrics_list.json")
+
+
+def _tensor_to_list(x):
+    if isinstance(x, torch.Tensor):
+        return x.detach().cpu().tolist()
+    return x
+
+
+def log_predictions_to_mlflow(
+    preds: list[dict],
+    image_paths: list[str] | None = None,
+    class_names: list[str] | None = None,
+    artifact_dir: str = "predictions",
+    file_name: str = "predictions.json",
+):
+    """
+    Logs model predictions as MLflow artifacts.
+
+    preds[i]:
+        {
+            "boxes": FloatTensor[N, 4],
+            "scores": FloatTensor[N],
+            "labels": Int64Tensor[N],
+        }
+
+    image_paths:
+        Optional list of image paths aligned with preds.
+
+    class_names:
+        Optional list where class_names[label_id] -> class name.
+    """
+    records = []
+
+    for i, pred in enumerate(preds):
+        boxes = _tensor_to_list(pred.get("boxes", torch.empty((0, 4))))
+        scores = _tensor_to_list(pred.get("scores", torch.empty((0,))))
+        labels = _tensor_to_list(
+            pred.get("labels", torch.empty((0,), dtype=torch.int64))
+        )
+
+        detections = []
+        for box, score, label in zip(boxes, scores, labels):
+            label_id = int(label)
+            label_name = (
+                class_names[label_id]
+                if class_names is not None and 0 <= label_id < len(class_names)
+                else str(label_id)
+            )
+
+            detections.append(
+                {
+                    "label_id": label_id,
+                    "label_name": label_name,
+                    "confidence": float(score),
+                    "box_xyxy": [float(x) for x in box],
+                }
+            )
+
+        records.append(
+            {
+                "image_index": i,
+                "image_path": image_paths[i] if image_paths is not None else None,
+                "num_detections": len(detections),
+                "detections": detections,
+            }
+        )
+
+    # Log raw nested JSON
+    mlflow.log_dict(records, f"{artifact_dir}/{file_name}")
+
+    # Also log a flat table for easier browsing/filtering in MLflow UI
+    flat_rows = []
+    for rec in records:
+        for det in rec["detections"]:
+            flat_rows.append(
+                {
+                    "image_index": rec["image_index"],
+                    "image_path": rec["image_path"],
+                    "label_id": det["label_id"],
+                    "label_name": det["label_name"],
+                    "confidence": det["confidence"],
+                    "x1": det["box_xyxy"][0],
+                    "y1": det["box_xyxy"][1],
+                    "x2": det["box_xyxy"][2],
+                    "y2": det["box_xyxy"][3],
+                }
+            )
+
+    df = pd.DataFrame(flat_rows)
+    mlflow.log_table(df, f"{artifact_dir}/predictions_table.json")
+
+
+def draw_and_log_predictions_to_mlflow(
+    preds: list[dict],
+    image_paths: list[str],
+    class_names: list[str] | None = None,
+    artifact_dir: str = "prediction_images",
+    score_threshold: float = 0.0,
+    line_width: int = 3,
+):
+    """
+    Draw predicted boxes on images and log them as MLflow artifacts.
+
+    preds[i]:
+        {
+            "boxes": FloatTensor[N, 4],   # xyxy in pixel coordinates
+            "scores": FloatTensor[N],
+            "labels": Int64Tensor[N],
+        }
+
+    image_paths[i]:
+        path to the corresponding source image
+    """
+    if len(preds) != len(image_paths):
+        raise ValueError(
+            f"preds and image_paths must have same length, got {len(preds)} and {len(image_paths)}"
+        )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for i, (pred, image_path) in enumerate(zip(preds, image_paths)):
+            image = Image.open(image_path).convert("RGB")
+            draw = ImageDraw.Draw(image)
+
+            boxes = pred.get("boxes", torch.empty((0, 4))).detach().cpu()
+            scores = pred.get("scores", torch.empty((0,))).detach().cpu()
+            labels = (
+                pred.get("labels", torch.empty((0,), dtype=torch.int64)).detach().cpu()
+            )
+
+            for box, score, label in zip(boxes, scores, labels):
+                score = float(score)
+                if score < score_threshold:
+                    continue
+
+                x1, y1, x2, y2 = [float(x) for x in box.tolist()]
+                label_id = int(label)
+
+                if class_names is not None and 0 <= label_id < len(class_names):
+                    label_text = class_names[label_id]
+                else:
+                    label_text = str(label_id)
+
+                text = f"{label_text} {score:.2f}"
+
+                # Draw rectangle
+                draw.rectangle([x1, y1, x2, y2], outline="red", width=line_width)
+
+                # Draw text background and text
+                try:
+                    font = ImageFont.load_default()
+                except Exception:
+                    font = None
+
+                if font is not None:
+                    bbox = draw.textbbox((x1, y1), text, font=font)
+                else:
+                    # fallback approximation
+                    bbox = (x1, y1, x1 + 8 * len(text), y1 + 14)
+
+                tx1, ty1, tx2, ty2 = bbox
+                text_bg = [tx1, max(0, ty1 - 2), tx2 + 4, ty2 + 2]
+                draw.rectangle(text_bg, fill="red")
+                draw.text(
+                    (x1 + 2, max(0, y1 - (ty2 - ty1) - 2)),
+                    text,
+                    fill="cyan",
+                    font=font,
+                )
+
+            image_name = Path(image_path).stem
+            output_path = os.path.join(tmpdir, f"{i:05d}_{image_name}_pred.jpg")
+            image.save(output_path, quality=95)
+
+        mlflow.log_artifacts(tmpdir, artifact_path=artifact_dir)

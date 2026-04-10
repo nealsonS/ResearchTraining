@@ -1,5 +1,6 @@
-from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 import torch
+from qwen_vl_utils import process_vision_info
 
 import os
 import yaml
@@ -26,7 +27,11 @@ from util.io import (
     prepare_targets,
 )
 
-from util.metrics import evaluate_yolo_style, log_yolo_metrics_to_mlflow
+from util.metrics import (
+    evaluate_yolo_style,
+    log_yolo_metrics_to_mlflow,
+    draw_and_log_predictions_to_mlflow,
+)
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -68,6 +73,37 @@ print(
 def run_qwen_inference(image: str, processor, model):
     # mostly from https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
 
+    img = Image.open(image).convert("RGB")
+
+    def compute_qwen_resize(orig_w, orig_h):
+        # target: multiple of 28, but preserve aspect ratio
+        scale = min(
+            (orig_w // 32 * 32) / orig_w,
+            (orig_h // 32 * 32) / orig_h,
+        )
+
+        resized_w = int(orig_w * scale)
+        resized_h = int(orig_h * scale)
+
+        # snap to multiple of 32
+        # 32 for Qwen3-vl and 28 for qwen2.5-vl
+        # from https://github.com/QwenLM/Qwen3-VL
+        resized_w = (resized_w // 32) * 32
+        resized_h = (resized_h // 32) * 32
+
+        return resized_w, resized_h, scale
+
+    def scale_1000_to_pixels(box, img_w, img_h):
+        x1, y1, x2, y2 = box
+        return [
+            x1 / 1000 * img_w,
+            y1 / 1000 * img_h,
+            x2 / 1000 * img_w,
+            y2 / 1000 * img_h,
+        ]
+
+    resized_w, resized_h, scale = compute_qwen_resize(img.width, img.height)
+
     message = [
         {
             "role": "user",
@@ -75,6 +111,8 @@ def run_qwen_inference(image: str, processor, model):
                 {
                     "type": "image",
                     "image": image,
+                    "resized_width": resized_w,
+                    "resized_height": resized_h,
                 },
                 {"type": "text", "text": TEXT_PROMPT},
             ],
@@ -82,13 +120,22 @@ def run_qwen_inference(image: str, processor, model):
     ]
 
     # inputs = tokenizer(query, return_tensors="pt").to(DEVICE)
-    inputs = processor.apply_chat_template(
-        message,
-        tokenize=True,
-        add_generation_prompt=True,
-        return_dict=True,
-        return_tensors="pt",
-    ).to(model.device)
+    # inputs = processor.apply_chat_template(
+    #     message,
+    #     tokenize=True,
+    #     add_generation_prompt=True,
+    #     return_dict=True,
+    #     return_tensors="pt",
+    # ).to(model.device)
+    text = processor.apply_chat_template(
+        message, tokenize=False, add_generation_prompt=True
+    )
+    images, videos = process_vision_info(message, image_patch_size=16)
+
+    inputs = processor(
+        text=text, images=images, videos=videos, do_resize=False, return_tensors="pt"
+    )
+    inputs = inputs.to(model.device)
 
     with torch.no_grad():
         generated_ids = model.generate(**inputs, max_new_tokens=128)
@@ -120,9 +167,31 @@ def run_qwen_inference(image: str, processor, model):
             continue
 
         try:
-            box = [float(x) for x in box]
+            x1, y1, x2, y2 = [float(x) for x in box]
+
+            # rescale boxes to match original size
+            scale_x = img.width / resized_w
+            scale_y = img.height / resized_h
+
+            x1o = x1 * scale_x
+            y1o = y1 * scale_y
+            x2o = x2 * scale_x
+            y2o = y2 * scale_y
+
+            box = [x1o, y1o, x2o, y2o]
+
+            # qwen assume image is 0-1000
+            box = scale_1000_to_pixels(box, img.width, img.height)
+
+            # print("orig:", img.width, img.height)
+            # print("resized:", resized_w, resized_h)
+            # print("raw box:", x1, y1, x2, y2)
+            # print("scaled box:", x1o, y1o, x2o, y2o)
+            # print(box)
+
             score = float(score)
         except Exception:
+            # print(e)
             continue
 
         boxes.append(box)
@@ -175,7 +244,7 @@ def main():
     #     .eval()
     # )
 
-    model = Qwen3VLForConditionalGeneration.from_pretrained(
+    model = AutoModelForImageTextToText.from_pretrained(
         RUN_CONFIG["model_id"],
         dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
@@ -214,6 +283,15 @@ def main():
             class_names=CLASS_NAMES,
             map_label="mAP50-95",
         )
+
+        if RUN_CONFIG.get("store_images_and_pred", False):
+            draw_and_log_predictions_to_mlflow(
+                preds=all_preds,
+                image_paths=image_paths,
+                class_names=CLASS_NAMES,
+                artifact_dir="prediction_images",
+                score_threshold=RUN_CONFIG["conf_thresh"],
+            )
 
 
 if __name__ == "__main__":

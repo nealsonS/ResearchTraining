@@ -135,6 +135,7 @@ Rules:
 - confidence is a float between 0 and 1
 - Do not include any explanations or text outside JSON
 - If no objects are found, return []
+- Detect only logos not the truck
 
 Example:
 [
