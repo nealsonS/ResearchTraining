@@ -1,5 +1,5 @@
 # Research Training
-Just a repo for training scripts for my Research
+A repo for training scripts for my research under Prof. Seon Kim
 
 # The Setup (Optimized for Cost Efficiency)
 1. Use a VPS with GPU access with Runpod and upload data there to a persistent storage to make training easy
