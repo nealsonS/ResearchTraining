@@ -6,9 +6,7 @@ import os
 import yaml
 import json
 import glob
-from pathlib import Path
 import mlflow
-import torch
 from PIL import Image
 
 from dotenv import load_dotenv
