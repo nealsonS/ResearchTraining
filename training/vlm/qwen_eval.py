@@ -11,7 +11,6 @@ import mlflow
 import torch
 from PIL import Image
 
-# from torchmetrics.detection import MeanAveragePrecision
 from dotenv import load_dotenv
 from tqdm import tqdm
 
@@ -27,11 +26,7 @@ from util.io import (
     prepare_targets,
 )
 
-from util.metrics import (
-    evaluate_yolo_style,
-    log_yolo_metrics_to_mlflow,
-    draw_and_log_predictions_to_mlflow,
-)
+from util.metrics import evaluate_yolo_style, log_results_to_mlflow
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -52,7 +47,7 @@ TEXT_PROMPT = generate_qwen_prompt(CLASS_NAMES)
 RUN_CONFIG["CLASS_NAMES"] = CLASS_NAMES
 RUN_CONFIG["TEXT_PROMPT"] = TEXT_PROMPT
 
-CONF_THRESH = RUN_CONFIG["conf_thresh"]
+CONF_THRESHOLDS = RUN_CONFIG["conf_thresholds"]
 IOU_THRESHOLDS = [x / 100 for x in range(50, 100, 5)]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -119,14 +114,6 @@ def run_qwen_inference(image: str, processor, model):
         }
     ]
 
-    # inputs = tokenizer(query, return_tensors="pt").to(DEVICE)
-    # inputs = processor.apply_chat_template(
-    #     message,
-    #     tokenize=True,
-    #     add_generation_prompt=True,
-    #     return_dict=True,
-    #     return_tensors="pt",
-    # ).to(model.device)
     text = processor.apply_chat_template(
         message, tokenize=False, add_generation_prompt=True
     )
@@ -183,15 +170,8 @@ def run_qwen_inference(image: str, processor, model):
             # qwen assume image is 0-1000
             box = scale_1000_to_pixels(box, img.width, img.height)
 
-            # print("orig:", img.width, img.height)
-            # print("resized:", resized_w, resized_h)
-            # print("raw box:", x1, y1, x2, y2)
-            # print("scaled box:", x1o, y1o, x2o, y2o)
-            # print(box)
-
             score = float(score)
         except Exception:
-            # print(e)
             continue
 
         boxes.append(box)
@@ -232,17 +212,6 @@ def main():
     RUN_CONFIG["valid_images"] = len(image_paths)
 
     print(json.dumps(RUN_CONFIG, indent=4))
-    # tokenizer = AutoTokenizer.from_pretrained(
-    #     RUN_CONFIG["model_id"], trust_remote_code=True
-    # )
-
-    # model = (
-    #     AutoModelForCausalLM.from_pretrained(
-    #         RUN_CONFIG["model_id"], trust_remote_code=True, bf16=True
-    #     )
-    #     .to(DEVICE)
-    #     .eval()
-    # )
 
     model = AutoModelForImageTextToText.from_pretrained(
         RUN_CONFIG["model_id"],
@@ -258,7 +227,6 @@ def main():
     with mlflow.start_run():
         mlflow.log_params(RUN_CONFIG)
         for img_path in tqdm(image_paths):
-            # img_path = Path(img_path)
             image = Image.open(img_path).convert("RGB")
             label_path = os.path.join(
                 LABEL_DIR, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
@@ -271,27 +239,37 @@ def main():
             all_preds.append(pred)
             all_targets.append(target)
 
+        # summary = evaluate_yolo_style(
+        #     preds=all_preds,
+        #     targets=all_targets,
+        #     num_classes=len(CLASS_NAMES),
+        #     iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
+        # )
+
+        # log_yolo_metrics_to_mlflow(
+        #     summary=summary,
+        #     class_names=CLASS_NAMES,
+        #     map_label="mAP50-95",
+        # )
+
+        # if RUN_CONFIG.get("store_images_and_pred", False):
+        #     draw_and_log_predictions_to_mlflow(
+        #         preds=all_preds,
+        #         image_paths=image_paths,
+        #         class_names=CLASS_NAMES,
+        #         artifact_dir="prediction_images",
+        #         score_threshold=RUN_CONFIG["conf_thresh"],
+        #     )
+
         summary = evaluate_yolo_style(
             preds=all_preds,
             targets=all_targets,
             num_classes=len(CLASS_NAMES),
-            iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
+            iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
+            conf_thresholds=RUN_CONFIG["conf_thresholds"],
         )
 
-        log_yolo_metrics_to_mlflow(
-            summary=summary,
-            class_names=CLASS_NAMES,
-            map_label="mAP50-95",
-        )
-
-        if RUN_CONFIG.get("store_images_and_pred", False):
-            draw_and_log_predictions_to_mlflow(
-                preds=all_preds,
-                image_paths=image_paths,
-                class_names=CLASS_NAMES,
-                artifact_dir="prediction_images",
-                score_threshold=RUN_CONFIG["conf_thresh"],
-            )
+        log_results_to_mlflow(summary, ID_TO_CLASS=ID_TO_CLASS)
 
 
 if __name__ == "__main__":

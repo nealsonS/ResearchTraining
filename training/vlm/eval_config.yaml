@@ -1,10 +1,14 @@
-image_dir: "../data/combined_reannotated/valid/images"
-label_dir: "../data/combined_reannotated/valid/labels"
+image_dir: "../data/combined_reannotated/valid_test/images"
+label_dir: "../data/combined_reannotated/valid_test/labels"
 data_config: "../data/combined_reannotated/data.yaml"
 
 model_id: "Qwen/Qwen3-VL-2B-Instruct"
-conf_thresh: 0.5
+conf_thresholds:
+  - 0.6
+  - 0.7
+  - 0.8
+  - 0.9
 
-experiment_name: "VLM Inference"
+experiment_name: "VLM Inference Dummy"
 
 store_images_and_pred: false
