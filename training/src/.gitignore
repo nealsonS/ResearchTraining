@@ -1,2 +1,3 @@
 *.ttf
 __pycache__
+*.egg-info

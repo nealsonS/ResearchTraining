@@ -8,14 +8,12 @@ import torch
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection
 
-# from torchmetrics.detection import MeanAveragePrecision
 from dotenv import load_dotenv
 from tqdm import tqdm
 
 import numpy as np
 
-from util.io import (
-    normalize_label,
+from ResearchTraining.util.io import (
     load_yolo_labels,
     read_data_config,
     get_cls,
@@ -23,7 +21,14 @@ from util.io import (
     prepare_targets,
 )
 
-from util.metrics import evaluate_yolo_style, log_yolo_metrics_to_mlflow
+from ResearchTraining.util.metrics import (
+    evaluate_yolo_style,
+    log_yolo_metrics_to_mlflow,
+)
+
+from ResearchTraining.models.dino import run_grounding_dino
+
+from ResearchTraining.util.metrics import evaluate_yolo_style, log_results_to_mlflow
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -61,50 +66,6 @@ print(
 )
 
 
-def run_grounding_dino(image, processor, model):
-    inputs = processor(images=image, text=TEXT_PROMPT, return_tensors="pt").to(DEVICE)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    results = processor.post_process_grounded_object_detection(
-        outputs,
-        threshold=CONF_THRESH,
-        target_sizes=[(image.height, image.width)],
-    )[0]
-
-    boxes = []
-    scores = []
-    labels = []
-
-    for box, score, label in zip(
-        results["boxes"], results["scores"], results["labels"]
-    ):
-        label = normalize_label(label)
-
-        if label not in CLASS_TO_ID:
-            continue
-
-        boxes.append(box.detach().cpu())
-        scores.append(score.detach().cpu())
-        labels.append(CLASS_TO_ID[label])
-
-    if len(boxes) == 0:
-        return [
-            {
-                "boxes": torch.empty((0, 4), dtype=torch.float32),
-                "scores": torch.empty((0,), dtype=torch.float32),
-                "labels": torch.empty((0,), dtype=torch.int64),
-            }
-        ]
-
-    return [
-        {
-            "boxes": torch.stack(boxes).to(torch.float32),
-            "scores": torch.stack(scores).to(torch.float32),
-            "labels": torch.tensor(labels, dtype=torch.int64),
-        }
-    ]
-
-
 # ----------------- MAIN ------------------
 def main():
     image_paths = []
@@ -136,25 +97,41 @@ def main():
             )
             label = load_yolo_labels(label_path, image.width, image.height)
 
-            pred = run_grounding_dino(image, processor, model)[0]
+            pred = run_grounding_dino(
+                image,
+                processor,
+                model,
+                text_prompt=TEXT_PROMPT,
+                class_to_id=CLASS_TO_ID,
+            )[0]
             target = prepare_targets(label)[0]
 
             # metrics.update(pred, target)
             all_preds.append(pred)
             all_targets.append(target)
 
+        # summary = evaluate_yolo_style(
+        #     preds=all_preds,
+        #     targets=all_targets,
+        #     num_classes=len(CLASS_NAMES),
+        #     iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
+        # )
+
+        # log_yolo_metrics_to_mlflow(
+        #     summary=summary,
+        #     class_names=CLASS_NAMES,
+        #     map_label="mAP50-95",
+        # )
+
         summary = evaluate_yolo_style(
             preds=all_preds,
             targets=all_targets,
             num_classes=len(CLASS_NAMES),
-            iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
+            iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
+            conf_thresholds=RUN_CONFIG["conf_thresholds"],
         )
 
-        log_yolo_metrics_to_mlflow(
-            summary=summary,
-            class_names=CLASS_NAMES,
-            map_label="mAP50-95",
-        )
+        log_results_to_mlflow(summary, ID_TO_CLASS=ID_TO_CLASS)
 
 
 if __name__ == "__main__":
