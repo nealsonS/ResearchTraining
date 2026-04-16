@@ -2,6 +2,9 @@ import os
 import yaml
 import json
 import torch
+import glob
+from PIL import Image
+from pathlib import Path
 
 
 # -------------- CONFIG READINGS --------------
@@ -54,6 +57,14 @@ def xyxy_to_yolo(box, img_w, img_h):
 
 
 # ------------- IO / PARSING --------------
+def get_images_from_dir(img_dir: str):
+    image_paths = []
+    for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
+        image_paths.extend(glob.glob(os.path.join(img_dir, ext)))
+    image_paths = sorted(image_paths)
+    return image_paths
+
+
 def load_yolo_labels(label_path, img_w, img_h):
     gts = []
     if not os.path.exists(label_path):
@@ -70,6 +81,20 @@ def load_yolo_labels(label_path, img_w, img_h):
                 {"class_id": cls, "box": yolo_to_xyxy(xc, yc, w, h, img_w, img_h)}
             )
     return gts
+
+
+def get_label_from_image(img_path: str, label_dir: str):
+    if not Path(img_path).exists():
+        raise FileNotFoundError(f"image {img_path} not found!")
+    if not Path(label_dir).exists():
+        raise FileNotFoundError(f"label directory {label_dir} not found!")
+
+    image = Image.open(img_path).convert("RGB")
+    label_path = os.path.join(
+        label_dir, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
+    )
+    label = load_yolo_labels(label_path, image.width, image.height)
+    return label
 
 
 def normalize_label(label):
@@ -103,43 +128,3 @@ def prepare_targets(label: list[dict]):
             ),
         }
     ]
-
-
-# ------------- Label Generation --------------
-def generate_dino_labels(classes: list[str]) -> str:
-    """For each label, generate the text prompt for each label"""
-    text_prompt = ""
-
-    for cls in classes:
-        text_prompt += f"{cls}. "
-
-    return text_prompt.strip()
-
-
-def generate_qwen_prompt(classes: list[str]) -> str:
-    return f"""
-You are an object detection model.
-
-Detect all instances of the following classes in the image:
-{classes}
-
-Return ONLY a valid JSON array.
-
-Each element must be:
-[class_name, confidence, [x1, y1, x2, y2]]
-
-Rules:
-- Coordinates must be integers
-- Coordinates are in pixel space
-- (x1, y1) is top-left, (x2, y2) is bottom-right
-- confidence is a float between 0 and 1
-- Do not include any explanations or text outside JSON
-- If no objects are found, return []
-- Detect only logos not the truck
-
-Example:
-[
-  ["amazon smile logo", 0.8, [12, 12, 30, 30]],
-  ["usps logo", 0.7, [50, 100, 70, 120]]
-]
-"""

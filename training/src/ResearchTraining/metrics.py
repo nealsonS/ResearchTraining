@@ -5,7 +5,6 @@ from torchmetrics.detection import MeanAveragePrecision
 import mlflow
 
 import pandas as pd
-import numpy as np
 
 
 def filter_preds_by_score(preds: list[dict], conf_threshold: float) -> list[dict]:
@@ -117,7 +116,6 @@ def calculate_recall(validation_metrics: dict, cls: int = None) -> float:
 def evaluate_yolo_style(
     preds: list[dict],
     targets: list[dict],
-    num_classes: int,
     iou_thresholds=list[int],
     conf_thresholds=list[float],
 ):

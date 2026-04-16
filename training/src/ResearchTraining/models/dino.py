@@ -2,6 +2,16 @@ import torch
 from ResearchTraining.util.io import normalize_label
 
 
+def generate_dino_labels(classes: list[str]) -> str:
+    """For each label, generate the text prompt for each label"""
+    text_prompt = ""
+
+    for cls in classes:
+        text_prompt += f"{cls}. "
+
+    return text_prompt.strip()
+
+
 def run_grounding_dino(
     image, processor, model, text_prompt: str, class_to_id: dict[str, int]
 ):

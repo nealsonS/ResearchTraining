@@ -1,0 +1,21 @@
+image_dir: "../../data/combined_reannotated/valid_test/images"
+label_dir: "../../data/combined_reannotated/valid_test/labels"
+data_config: "../../data/combined_reannotated/dummy.yaml"
+
+conf_thresholds:
+  - 0.6
+  - 0.7
+  - 0.8
+  - 0.9
+
+YOLO:
+  model_id: "yolo26n.pt"
+  epochs: 5
+  imgsz: 640
+  save_model: false
+  train: true
+  eval: true
+
+MLFLOW_EXPERIMENT_NAME: "YOLO"
+MLFLOW_RUN: "Yolo Dummy 1"
+

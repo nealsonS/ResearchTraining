@@ -1,7 +1,6 @@
 import os
 import yaml
 import json
-import glob
 from pathlib import Path
 import mlflow
 import torch
@@ -14,26 +13,25 @@ from tqdm import tqdm
 import numpy as np
 
 from ResearchTraining.util.io import (
-    load_yolo_labels,
     read_data_config,
     get_cls,
-    generate_dino_labels,
     prepare_targets,
+    get_images_from_dir,
+    get_label_from_image,
 )
 
-from ResearchTraining.util.metrics import (
+from ResearchTraining.metrics import (
     evaluate_yolo_style,
-    log_yolo_metrics_to_mlflow,
+    log_results_to_mlflow,
 )
 
-from ResearchTraining.models.dino import run_grounding_dino
+from ResearchTraining.models.dino import run_grounding_dino, generate_dino_labels
 
-from ResearchTraining.util.metrics import evaluate_yolo_style, log_results_to_mlflow
 
 # ---------------- CONFIG ----------------
 load_dotenv()
 
-with open("./eval_config.yaml", "r") as f:
+with open("./config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
 
 print("Configurating...")
@@ -68,10 +66,7 @@ print(
 
 # ----------------- MAIN ------------------
 def main():
-    image_paths = []
-    for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
-        image_paths.extend(glob.glob(os.path.join(IMAGE_DIR, ext)))
-    image_paths = sorted(image_paths)
+    image_paths = get_images_from_dir(IMAGE_DIR)
     RUN_CONFIG["valid_images"] = len(image_paths)
     print(json.dumps(RUN_CONFIG, indent=4))
 
@@ -82,7 +77,6 @@ def main():
     )
 
     # prediction metrics
-    # metrics = MeanAveragePrecision(iou_type="bbox", class_metrics=True)
     all_preds = []
     all_targets = []
 
@@ -92,10 +86,7 @@ def main():
             img_path = Path(img_path)
 
             image = Image.open(img_path).convert("RGB")
-            label_path = os.path.join(
-                LABEL_DIR, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
-            )
-            label = load_yolo_labels(label_path, image.width, image.height)
+            label = get_label_from_image(img_path, LABEL_DIR)
 
             pred = run_grounding_dino(
                 image,
@@ -106,22 +97,8 @@ def main():
             )[0]
             target = prepare_targets(label)[0]
 
-            # metrics.update(pred, target)
             all_preds.append(pred)
             all_targets.append(target)
-
-        # summary = evaluate_yolo_style(
-        #     preds=all_preds,
-        #     targets=all_targets,
-        #     num_classes=len(CLASS_NAMES),
-        #     iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
-        # )
-
-        # log_yolo_metrics_to_mlflow(
-        #     summary=summary,
-        #     class_names=CLASS_NAMES,
-        #     map_label="mAP50-95",
-        # )
 
         summary = evaluate_yolo_style(
             preds=all_preds,

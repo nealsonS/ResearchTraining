@@ -5,9 +5,7 @@ import torch
 import os
 import yaml
 import json
-import glob
 import mlflow
-from PIL import Image
 
 from dotenv import load_dotenv
 from tqdm import tqdm
@@ -15,18 +13,16 @@ from tqdm import tqdm
 import numpy as np
 
 from ResearchTraining.util.io import (
-    normalize_label,
-    load_yolo_labels,
     read_data_config,
     get_cls,
-    generate_qwen_prompt,
-    parse_output_to_json,
     prepare_targets,
+    get_images_from_dir,
+    get_label_from_image,
 )
 
-from ResearchTraining.util.metrics import evaluate_yolo_style, log_results_to_mlflow
+from ResearchTraining.metrics import evaluate_yolo_style, log_results_to_mlflow
 
-from ResearchTraining.models.qwen import run_qwen_inference
+from ResearchTraining.models.qwen import run_qwen_inference, generate_qwen_prompt
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -74,10 +70,7 @@ def main():
     4. Parse output to JSON
     5. Calculate metrics
     """
-    image_paths = []
-    for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp"):
-        image_paths.extend(glob.glob(os.path.join(IMAGE_DIR, ext)))
-    image_paths = sorted(image_paths)
+    image_paths = get_images_from_dir(IMAGE_DIR)
     RUN_CONFIG["valid_images"] = len(image_paths)
 
     print(json.dumps(RUN_CONFIG, indent=4))
@@ -96,12 +89,7 @@ def main():
     with mlflow.start_run():
         mlflow.log_params(RUN_CONFIG)
         for img_path in tqdm(image_paths):
-            image = Image.open(img_path).convert("RGB")
-            label_path = os.path.join(
-                LABEL_DIR, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
-            )
-            label = load_yolo_labels(label_path, image.width, image.height)
-
+            label = get_label_from_image(img_path, LABEL_DIR)
             pred = run_qwen_inference(
                 img_path,
                 processor,
@@ -114,32 +102,9 @@ def main():
             all_preds.append(pred)
             all_targets.append(target)
 
-        # summary = evaluate_yolo_style(
-        #     preds=all_preds,
-        #     targets=all_targets,
-        #     num_classes=len(CLASS_NAMES),
-        #     iou_thresholds=np.arange(0.50, 0.96, 0.05),  # mAP50-95
-        # )
-
-        # log_yolo_metrics_to_mlflow(
-        #     summary=summary,
-        #     class_names=CLASS_NAMES,
-        #     map_label="mAP50-95",
-        # )
-
-        # if RUN_CONFIG.get("store_images_and_pred", False):
-        #     draw_and_log_predictions_to_mlflow(
-        #         preds=all_preds,
-        #         image_paths=image_paths,
-        #         class_names=CLASS_NAMES,
-        #         artifact_dir="prediction_images",
-        #         score_threshold=RUN_CONFIG["conf_thresh"],
-        #     )
-
         summary = evaluate_yolo_style(
             preds=all_preds,
             targets=all_targets,
-            num_classes=len(CLASS_NAMES),
             iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
             conf_thresholds=RUN_CONFIG["conf_thresholds"],
         )

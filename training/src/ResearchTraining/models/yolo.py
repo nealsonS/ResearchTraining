@@ -1,63 +1,66 @@
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from pathlib import Path
+from ultralytics import YOLO
 import torch
-from qwen_vl_utils import process_vision_info
-
-import os
-import yaml
-import json
-import glob
 import mlflow
-from PIL import Image
 
-from dotenv import load_dotenv
-from tqdm import tqdm
 
-import numpy as np
+def train_yolo(model: YOLO, data_yaml_path: str, epochs: int, imgsz: int):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if not Path(data_yaml_path).exists():
+        raise FileNotFoundError(f"{data_yaml_path} not found")
 
-from util.io import (
-    normalize_label,
-    load_yolo_labels,
-    read_data_config,
-    get_cls,
-    generate_qwen_prompt,
-    parse_output_to_json,
-    prepare_targets,
-)
+    train_results = model.train(
+        data=data_yaml_path, epochs=epochs, imgsz=imgsz, device=device
+    )
 
-from util.metrics import evaluate_yolo_style, log_results_to_mlflow
+    return model, train_results
 
-# ---------------- CONFIG ----------------
-load_dotenv()
-torch.manual_seed(1234)
 
-with open("./eval_config.yaml", "r") as f:
-    RUN_CONFIG = yaml.safe_load(f)
+def run_yolo_inference(image_path: str, model: YOLO):
+    results = model(image_path)
+    boxes = results[0].boxes
+    if boxes is None or boxes.xyxy.numel() == 0:
+        return [
+            {
+                "boxes": torch.empty((0, 4), dtype=torch.float32),
+                "scores": torch.empty((0,), dtype=torch.float32),
+                "labels": torch.empty((0,), dtype=torch.int64),
+            }
+        ]
 
-print("Configurating...")
-IMAGE_DIR = RUN_CONFIG["image_dir"]
-LABEL_DIR = RUN_CONFIG["label_dir"]
-MODEL_ID = RUN_CONFIG["model_id"]
-DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
+    return [
+        {
+            "boxes": boxes.xyxy.to(dtype=torch.float32),
+            "scores": boxes.conf.to(dtype=torch.float32),
+            "labels": boxes.cls.to(dtype=torch.int64),
+        }
+    ]
 
-CLASS_NAMES = get_cls(DATA_CONFIG, clean=True)
-TEXT_PROMPT = generate_qwen_prompt(CLASS_NAMES)
 
-RUN_CONFIG["CLASS_NAMES"] = CLASS_NAMES
-RUN_CONFIG["TEXT_PROMPT"] = TEXT_PROMPT
+def run_yolo_batch_inference(image_paths: list[str], model: YOLO):
+    results = model(image_paths)
+    all_preds = []
+    for r in results:
+        boxes = r.boxes
+        if boxes is None or boxes.xyxy.numel() == 0:
+            pred = [
+                {
+                    "boxes": torch.empty((0, 4), dtype=torch.float32),
+                    "scores": torch.empty((0,), dtype=torch.float32),
+                    "labels": torch.empty((0,), dtype=torch.int64),
+                }
+            ]
+        else:
+            pred = [
+                {
+                    "boxes": boxes.xyxy.to(dtype=torch.float32),
+                    "scores": boxes.conf.to(dtype=torch.float32),
+                    "labels": boxes.cls.to(dtype=torch.int64),
+                }
+            ]
+        all_preds.extend(pred)
+    return all_preds
 
-CONF_THRESHOLDS = RUN_CONFIG["conf_thresholds"]
-IOU_THRESHOLDS = [x / 100 for x in range(50, 100, 5)]
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-print(f"Device: {DEVICE}")
-
-CLASS_TO_ID = {name: i for i, name in enumerate(CLASS_NAMES)}
-ID_TO_CLASS = {i: name for i, name in enumerate(CLASS_NAMES)}
-
-mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
-mlflow.set_experiment(RUN_CONFIG["experiment_name"])
-
-print(f"MLflow Tracking URI: {mlflow.get_tracking_uri()}")
-print(
-    f"Active Experiment: {mlflow.get_experiment_by_name(RUN_CONFIG['experiment_name'])}"
-)
+def log_yolo_mlflow(model: YOLO):
+    mlflow.log_artifact(model.trainier.best)

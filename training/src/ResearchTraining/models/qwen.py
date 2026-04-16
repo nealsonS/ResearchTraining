@@ -4,6 +4,35 @@ from qwen_vl_utils import process_vision_info
 from ResearchTraining.util.io import parse_output_to_json, normalize_label
 
 
+def generate_qwen_prompt(classes: list[str]) -> str:
+    return f"""
+You are an object detection model.
+
+Detect all instances of the following classes in the image:
+{classes}
+
+Return ONLY a valid JSON array.
+
+Each element must be:
+[class_name, confidence, [x1, y1, x2, y2]]
+
+Rules:
+- Coordinates must be integers
+- Coordinates are in pixel space
+- (x1, y1) is top-left, (x2, y2) is bottom-right
+- confidence is a float between 0 and 1
+- Do not include any explanations or text outside JSON
+- If no objects are found, return []
+- Detect only logos not the truck
+
+Example:
+[
+  ["amazon smile logo", 0.8, [12, 12, 30, 30]],
+  ["usps logo", 0.7, [50, 100, 70, 120]]
+]
+"""
+
+
 def run_qwen_inference(
     image: str, processor, model, text_prompt: str, class_to_id: dict[str, int]
 ):
