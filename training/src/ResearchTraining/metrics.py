@@ -1,6 +1,8 @@
 import torch
+from collections import defaultdict
 
 from torchmetrics.detection import MeanAveragePrecision
+from torchvision.ops import box_iou
 
 import mlflow
 
@@ -37,78 +39,71 @@ def filter_preds_by_score(preds: list[dict], conf_threshold: float) -> list[dict
     return output
 
 
-def calculate_precision(validation_metrics: dict, cls: int = None) -> float:
-    """Calculate precision yolo style from output dict from MeanAveragePrecision
-    Calculate at:
-      - IoU=0.5
-      - All areas
-      - 100 max detections
+def _match_predictions(
+    preds: list[dict],
+    targets: list[dict],
+    iou_threshold: float = 0.5,
+) -> dict[int, tuple[int, int, int]]:
+    """Match predictions to ground truth at a fixed IoU threshold.
 
-    If class inputted -> pick out class then calculate mean
-    If class not inputted -> aggregate among all classes
-
-    Shape is: (TxRxKxAxM)
-
-    Args:
-        validation_metrics (dict): _description_
-        cls (int, optional): _description_. Defaults to None.
+    Predictions should already be confidence-filtered before calling this.
+    Matching is greedy: predictions are processed in descending confidence
+    order (matching YOLO's approach); each GT box can only be matched once.
 
     Returns:
-        float: _description_
+        dict mapping class_id → (TP, FP, n_gt)
     """
+    tp_per_class: dict[int, int] = defaultdict(int)
+    fp_per_class: dict[int, int] = defaultdict(int)
+    n_gt_per_class: dict[int, int] = defaultdict(int)
 
-    if "precision" not in validation_metrics:
-        return None
+    for tgt in targets:
+        for lbl in tgt["labels"].tolist():
+            n_gt_per_class[int(lbl)] += 1
 
-    precision = validation_metrics["precision"][0, :, :, 0, -1]
+    for pred, tgt in zip(preds, targets):
+        pred_boxes = pred["boxes"]    # (N, 4)
+        pred_scores = pred["scores"]  # (N,)
+        pred_labels = pred["labels"]  # (N,)
+        gt_boxes = tgt["boxes"]       # (M, 4)
+        gt_labels = tgt["labels"]     # (M,)
 
-    # replace -1 with NaN to avoid it messing up
-    # mean values
-    precision = precision.clone()  # avoid writing in-memory
-    precision[precision < 0] = float("nan")
+        if len(pred_boxes) == 0:
+            continue
 
-    # average among all class
-    if cls is None:
-        return torch.nanmean(precision).item()
-    elif isinstance(cls, int):
-        return torch.nanmean(precision[:, cls]).item()
+        # Sort by confidence descending (matches YOLO's greedy assignment)
+        sort_idx = pred_scores.argsort(descending=True)
+        pred_boxes = pred_boxes[sort_idx]
+        pred_labels = pred_labels[sort_idx]
 
+        if len(gt_boxes) == 0:
+            for lbl in pred_labels.tolist():
+                fp_per_class[int(lbl)] += 1
+            continue
 
-def calculate_recall(validation_metrics: dict, cls: int = None) -> float:
-    """Calculate recall yolo style from output dict from MeanAveragePrecision
-    Calculate at:
-      - IoU=0.5
-      - All areas
-      - 100 max detections
+        iou = box_iou(pred_boxes, gt_boxes)  # (N, M)
+        gt_matched = torch.zeros(len(gt_boxes), dtype=torch.bool)
 
-    If class inputted -> pick out class then calculate mean
-    If class not inputted -> aggregate among all classes
+        for i in range(len(pred_boxes)):
+            pred_lbl = int(pred_labels[i].item())
+            same_class = (gt_labels == pred_labels[i]) & ~gt_matched
 
-    Shape is: (TxKxAxM)
+            if not same_class.any():
+                fp_per_class[pred_lbl] += 1
+                continue
 
-    Args:
-        validation_metrics (dict): _description_
-        cls (int, optional): _description_. Defaults to None.
+            row_iou = iou[i].clone()
+            row_iou[~same_class] = 0.0
+            best_iou, best_j = row_iou.max(dim=0)
 
-    Returns:
-        float: _description_
-    """
+            if best_iou.item() >= iou_threshold:
+                tp_per_class[pred_lbl] += 1
+                gt_matched[best_j] = True
+            else:
+                fp_per_class[pred_lbl] += 1
 
-    if "recall" not in validation_metrics:
-        return None
-
-    recall = validation_metrics["recall"][0, :, 0, -1]
-
-    # replace -1 with NaN to avoid it messing up
-    # mean values
-    recall = recall.clone()  # avoid writing in-memory
-    recall[recall < 0] = float("nan")
-
-    # average among all class
-    if cls is None:
-        return torch.nanmean(recall).item()
-    elif isinstance(cls, int):
-        return torch.nanmean(recall[cls]).item()
+    all_classes = set(n_gt_per_class) | set(fp_per_class) | set(tp_per_class)
+    return {cls: (tp_per_class[cls], fp_per_class[cls], n_gt_per_class[cls]) for cls in all_classes}
 
 
 # TODO- handle case when label is in the YAML file
@@ -116,8 +111,8 @@ def calculate_recall(validation_metrics: dict, cls: int = None) -> float:
 def evaluate_yolo_style(
     preds: list[dict],
     targets: list[dict],
-    iou_thresholds=list[int],
-    conf_thresholds=list[float],
+    iou_thresholds: list[float],
+    conf_thresholds: list[float],
 ):
     """
     preds[i]:
@@ -133,69 +128,72 @@ def evaluate_yolo_style(
             "labels": Int64Tensor[M],
         }
 
-    YOLO calculates precision and recall basically average precision/recall at IoU=0.5 and single confidence threshold
-    mAP50 basically is average precision/recall at ALL confidence threshold
+    Precision and recall are computed YOLO-style:
+      - Filter predictions at each confidence threshold
+      - Greedy TP/FP matching at IoU=0.5 (highest-confidence predictions matched first)
+      - P = TP / (TP + FP),  R = TP / n_gt  per class; overall = mean across classes
+
+    mAP50 and mAP50-95 are confidence-threshold independent and computed once
+    over all predictions (AUC of precision-recall curve).
     """
+    # mAP is independent of confidence threshold — compute once
+    metric_map50 = MeanAveragePrecision(
+        box_format="xyxy",
+        iou_type="bbox",
+        iou_thresholds=[0.5],
+        class_metrics=True,
+    )
+    metric_map50.update(preds, targets)
+    map50 = metric_map50.compute()
+
+    metric_map50_95 = MeanAveragePrecision(
+        box_format="xyxy",
+        iou_type="bbox",
+        iou_thresholds=iou_thresholds,
+        class_metrics=True,
+    )
+    metric_map50_95.update(preds, targets)
+    map50_95 = metric_map50_95.compute()
+
+    # map_per_class is indexed by position, not class ID — build lookup
+    map50_cls_to_idx = {int(c): i for i, c in enumerate(map50["classes"].tolist())}
+    map50_95_cls_to_idx = {int(c): i for i, c in enumerate(map50_95["classes"].tolist())}
+
+    present_classes = torch.cat([t["labels"] for t in targets]).unique().tolist()
+    present_classes = [int(c) for c in present_classes]
+
     output = {}
     for conf in conf_thresholds:
-        # calculate scalar precision and recall first
-        metric = MeanAveragePrecision(
-            box_format="xyxy",
-            iou_type="bbox",
-            iou_thresholds=[0.5],
-            class_metrics=True,
-            extended_summary=True,
-        )
         pred_conf_filtered = filter_preds_by_score(preds=preds, conf_threshold=conf)
-        metric.update(pred_conf_filtered, targets)
-        val_met = metric.compute()
+        match_results = _match_predictions(pred_conf_filtered, targets)
 
-        # calculate map50
-        # no filter for conf threshold
-        metric_map50 = MeanAveragePrecision(
-            box_format="xyxy",
-            iou_type="bbox",
-            iou_thresholds=[0.5],
-            class_metrics=True,
-            # extended_summary=True,
-        )
+        results = []
+        for cls in present_classes:
+            tp, fp, n_gt = match_results.get(cls, (0, 0, 0))
+            p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            r = tp / n_gt if n_gt > 0 else 0.0
+            results.append(
+                {
+                    "class": cls,
+                    "precision": p,
+                    "recall": r,
+                    "map_50": map50["map_per_class"][map50_cls_to_idx[cls]].item(),
+                    "map_50_95": map50_95["map_per_class"][map50_95_cls_to_idx[cls]].item(),
+                }
+            )
 
-        metric_map50.update(preds, targets)
-        map50 = metric_map50.compute()
-
-        metric_map50_95 = MeanAveragePrecision(
-            box_format="xyxy",
-            iou_type="bbox",
-            iou_thresholds=iou_thresholds,
-            class_metrics=True,
-            # extended_summary=True,
-        )
-
-        metric_map50_95.update(preds, targets)
-        map50_95 = metric_map50_95.compute()
-
-        # get actual classes that appear in the labels
-        present_classes = torch.cat([t["labels"] for t in targets]).unique().tolist()
-        present_classes = [int(c) for c in present_classes]
-
-        results = [
-            {
-                "class": cls,
-                "precision": calculate_precision(val_met, cls),
-                "recall": calculate_recall(val_met, cls),
-                "map_50": map50["map_per_class"][cls].item(),
-                "map_50_95": map50_95["map_per_class"][cls].item(),
-            }
-            for cls in present_classes
-        ] + [
+        # Overall: macro-average P/R across classes (matches YOLO's mp/mr)
+        overall_p = sum(r["precision"] for r in results) / len(results) if results else 0.0
+        overall_r = sum(r["recall"] for r in results) / len(results) if results else 0.0
+        results.append(
             {
                 "class": -1,
-                "precision": calculate_precision(val_met),
-                "recall": calculate_recall(val_met),
+                "precision": overall_p,
+                "recall": overall_r,
                 "map_50": map50["map"].item(),
                 "map_50_95": map50_95["map"].item(),
             }
-        ]
+        )
 
         output[conf] = results
 
