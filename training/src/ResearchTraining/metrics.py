@@ -62,11 +62,11 @@ def _match_predictions(
             n_gt_per_class[int(lbl)] += 1
 
     for pred, tgt in zip(preds, targets):
-        pred_boxes = pred["boxes"]    # (N, 4)
+        pred_boxes = pred["boxes"]  # (N, 4)
         pred_scores = pred["scores"]  # (N,)
         pred_labels = pred["labels"]  # (N,)
-        gt_boxes = tgt["boxes"]       # (M, 4)
-        gt_labels = tgt["labels"]     # (M,)
+        gt_boxes = tgt["boxes"]  # (M, 4)
+        gt_labels = tgt["labels"]  # (M,)
 
         if len(pred_boxes) == 0:
             continue
@@ -103,11 +103,12 @@ def _match_predictions(
                 fp_per_class[pred_lbl] += 1
 
     all_classes = set(n_gt_per_class) | set(fp_per_class) | set(tp_per_class)
-    return {cls: (tp_per_class[cls], fp_per_class[cls], n_gt_per_class[cls]) for cls in all_classes}
+    return {
+        cls: (tp_per_class[cls], fp_per_class[cls], n_gt_per_class[cls])
+        for cls in all_classes
+    }
 
 
-# TODO- handle case when label is in the YAML file
-# but is not in labels
 def evaluate_yolo_style(
     preds: list[dict],
     targets: list[dict],
@@ -157,7 +158,9 @@ def evaluate_yolo_style(
 
     # map_per_class is indexed by position, not class ID — build lookup
     map50_cls_to_idx = {int(c): i for i, c in enumerate(map50["classes"].tolist())}
-    map50_95_cls_to_idx = {int(c): i for i, c in enumerate(map50_95["classes"].tolist())}
+    map50_95_cls_to_idx = {
+        int(c): i for i, c in enumerate(map50_95["classes"].tolist())
+    }
 
     present_classes = torch.cat([t["labels"] for t in targets]).unique().tolist()
     present_classes = [int(c) for c in present_classes]
@@ -178,12 +181,16 @@ def evaluate_yolo_style(
                     "precision": p,
                     "recall": r,
                     "map_50": map50["map_per_class"][map50_cls_to_idx[cls]].item(),
-                    "map_50_95": map50_95["map_per_class"][map50_95_cls_to_idx[cls]].item(),
+                    "map_50_95": map50_95["map_per_class"][
+                        map50_95_cls_to_idx[cls]
+                    ].item(),
                 }
             )
 
         # Overall: macro-average P/R across classes (matches YOLO's mp/mr)
-        overall_p = sum(r["precision"] for r in results) / len(results) if results else 0.0
+        overall_p = (
+            sum(r["precision"] for r in results) / len(results) if results else 0.0
+        )
         overall_r = sum(r["recall"] for r in results) / len(results) if results else 0.0
         results.append(
             {
@@ -227,22 +234,26 @@ def log_results_to_mlflow(
             if result["class"] == -1:
                 mlflow.log_metrics(
                     {
-                        "overall/conf_thresh": float(conf),
-                        "overall/P": float(result["precision"]),
-                        "overall/R": float(result["recall"]),
-                        "overall/mAP50": float(result["map_50"]),
-                        "overall/mAP50-95": float(result["map_50_95"]),
+                        f"overall/conf_{conf}/P": float(result["precision"]),
+                        f"overall/conf_{conf}/R": float(result["recall"]),
+                        f"overall/conf_{conf}/mAP50": float(result["map_50"]),
+                        f"overall/conf_{conf}/mAP50-95": float(result["map_50_95"]),
                     }
                 )
             else:
                 cls_name = ID_TO_CLASS.get(result["class"], "unk")
                 mlflow.log_metrics(
                     {
-                        f"per_class/{cls_name}/conf_thresh": float(conf),
-                        f"per_class/{cls_name}/P": float(result["precision"]),
-                        f"per_class/{cls_name}/R": float(result["recall"]),
-                        f"per_class/{cls_name}/mAP50": float(result["map_50"]),
-                        f"per_class/{cls_name}/mAP50-95": float(result["map_50_95"]),
+                        f"per_class/{cls_name}/conf_{conf}/P": float(
+                            result["precision"]
+                        ),
+                        f"per_class/{cls_name}/conf_{conf}/R": float(result["recall"]),
+                        f"per_class/{cls_name}/conf_{conf}/mAP50": float(
+                            result["map_50"]
+                        ),
+                        f"per_class/{cls_name}/conf_{conf}/mAP50-95": float(
+                            result["map_50_95"]
+                        ),
                     }
                 )
 
