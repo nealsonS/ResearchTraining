@@ -65,7 +65,7 @@ def get_images_from_dir(img_dir: str):
     return image_paths
 
 
-def load_yolo_labels(label_path, img_w, img_h):
+def load_yolo_labels(label_path, img_w, img_h, convert_xyxy=True) -> list[dict]:
     gts = []
     if not os.path.exists(label_path):
         return gts
@@ -77,23 +77,34 @@ def load_yolo_labels(label_path, img_w, img_h):
             cls, xc, yc, w, h = parts
             cls = int(float(cls))
             xc, yc, w, h = map(float, (xc, yc, w, h))
-            gts.append(
-                {"class_id": cls, "box": yolo_to_xyxy(xc, yc, w, h, img_w, img_h)}
-            )
+            if convert_xyxy:
+                gts.append(
+                    {"class_id": cls, "box": yolo_to_xyxy(xc, yc, w, h, img_w, img_h)}
+                )
+            else:
+                gts.append({"class_id": cls, "box": [xc, yc, w, h]})
     return gts
 
 
-def get_label_from_image(img_path: str, label_dir: str):
+def get_label_path_from_image(img_path: str, label_dir: str) -> str:
+    return os.path.join(
+        label_dir, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
+    )
+
+
+def get_label_from_image(
+    img_path: str, label_dir: str, convert_xyxy=True
+) -> list[dict]:
     if not Path(img_path).exists():
         raise FileNotFoundError(f"image {img_path} not found!")
     if not Path(label_dir).exists():
         raise FileNotFoundError(f"label directory {label_dir} not found!")
 
     image = Image.open(img_path).convert("RGB")
-    label_path = os.path.join(
-        label_dir, os.path.splitext(os.path.basename(img_path))[0] + ".txt"
+    label_path = get_label_path_from_image(img_path, label_dir)
+    label = load_yolo_labels(
+        label_path, image.width, image.height, convert_xyxy=convert_xyxy
     )
-    label = load_yolo_labels(label_path, image.width, image.height)
     return label
 
 
@@ -128,3 +139,15 @@ def prepare_targets(label: list[dict]):
             ),
         }
     ]
+
+
+def write_labels_to_file(labels: dict, dest: str):
+    if Path(dest).exists:
+        raise FileExistsError(f"file {dest} exists!")
+
+    lines = [
+        f"{label['class_id']} {' '.join(label['box'])}".strip() for label in labels
+    ]
+    lines_str = "\n".join(lines)
+    with open(dest, "w") as f:
+        f.write(lines_str)

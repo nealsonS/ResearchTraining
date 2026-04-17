@@ -1,5 +1,9 @@
-image_dir: "../../data/combined_reannotated/train/images"
-label_dir: "../../data/combined_reannotated/valid/labels"
+train_images: "../../data/combined_reannotated/train/images"
+train_labels: "../../data/combined_reannotated/train/labels"
+
+valid_images: "../../data/combined_reannotated/valid/images"
+valid_labels: "../../data/combined_reannotated/valid/labels"
+
 data_config: "../../data/combined_reannotated/data.yaml"
 
 conf_thresholds:

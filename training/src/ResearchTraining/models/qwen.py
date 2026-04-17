@@ -164,3 +164,113 @@ def run_qwen_inference(
             "labels": torch.tensor(labels, dtype=torch.int64),
         }
     ]
+
+
+# CLASSIFICATION
+def generate_classification_prompt(classes: list[str]) -> str:
+    return f"""
+You are an classification model.
+
+Classify the image as one of these logos:
+{classes}
+
+Return ONLY a valid JSON array.
+
+Each element must be:
+[class_name, confidence]
+
+Rules:
+- confidence is a float between 0 and 1
+- Do not include any explanations or text outside list
+- If no objects are found, return []
+
+Example:
+[
+  ["amazon smile logo", 0.8],
+  ["usps logo", 0.7]
+]
+"""
+
+
+def run_qwen_classification_inference(
+    image: str, processor, model, text_prompt: str, class_to_id: dict[str, int]
+):
+    # mostly from https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct
+
+    img = Image.open(image).convert("RGB")
+
+    message = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "image": image,
+                    "resized_width": img.width,
+                    "resized_height": img.height,
+                },
+                {"type": "text", "text": text_prompt},
+            ],
+        }
+    ]
+
+    text = processor.apply_chat_template(
+        message, tokenize=False, add_generation_prompt=True
+    )
+
+    images, videos = process_vision_info(message, image_patch_size=16)
+
+    inputs = processor(
+        text=text, images=images, videos=videos, do_resize=False, return_tensors="pt"
+    )
+    inputs = inputs.to(model.device)
+
+    with torch.no_grad():
+        generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :]
+        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )[0]
+    parsed = parse_output_to_json(output_text)
+
+    boxes = []
+    labels = []
+    scores = []
+
+    for item in parsed:
+        if not isinstance(item, list) or len(item) != 2:
+            continue
+
+        label, score = item
+        label = normalize_label(label)
+
+        if label not in class_to_id:
+            continue
+
+        try:
+            score = float(score)
+        except Exception:
+            continue
+
+        labels.append(class_to_id[label])
+        scores.append(score)
+
+    if len(boxes) == 0:
+        return [
+            {
+                "scores": torch.empty((0,), dtype=torch.float32),
+                "labels": torch.empty((0,), dtype=torch.int64),
+            }
+        ]
+
+    return [
+        {
+            "scores": torch.tensor(scores, dtype=torch.float32),
+            "labels": torch.tensor(labels, dtype=torch.int64),
+        }
+    ]

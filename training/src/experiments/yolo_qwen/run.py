@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from dotenv import load_dotenv
 import torch
 from PIL import Image
@@ -7,6 +8,8 @@ from ultralytics import YOLO, settings
 import mlflow
 import os
 import numpy as np
+import shutil
+import tempfile
 
 from transformers import AutoModelForImageTextToText, AutoProcessor
 
@@ -18,13 +21,19 @@ from ResearchTraining.util.io import (
     get_images_from_dir,
     get_label_from_image,
     prepare_targets,
-    xyxy_to_yolo,
+    get_label_path_from_image,
+    write_labels_to_file,
 )
 
 from ResearchTraining.models.yolo import (
     train_yolo,
     log_yolo_mlflow,
     run_yolo_batch_inference,
+)
+
+from ResearchTraining.models.qwen import (
+    generate_classification_prompt,
+    run_qwen_classification_inference,
 )
 
 from ResearchTraining.metrics import evaluate_yolo_style, log_results_to_mlflow
@@ -37,8 +46,12 @@ with open("./config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
 
 print("Configurating...")
-IMAGE_DIR = RUN_CONFIG["image_dir"]
-LABEL_DIR = RUN_CONFIG["label_dir"]
+TRAIN_IMAGES_DIR = RUN_CONFIG["TRAIN_IMAGES"]
+TRAIN_LABELS_DIR = RUN_CONFIG["TRAIN_LABELS"]
+
+VALID_IMAGES_DIR = RUN_CONFIG["VALID_IMAGES"]
+VALID_LABELS_DIR = RUN_CONFIG["VALID_LABELS"]
+
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
 
 CLASS_NAMES = get_cls(DATA_CONFIG, clean=True)
@@ -48,6 +61,8 @@ RUN_CONFIG["CLASS_NAMES"] = CLASS_NAMES
 CONF_THRESHOLDS = RUN_CONFIG["conf_thresholds"]
 IOU_THRESHOLDS = [x / 100 for x in range(50, 100, 5)]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+RUN_CONFIG["classification_prompt"] = generate_classification_prompt(CLASS_NAMES)
 
 print(f"Device: {DEVICE}")
 
@@ -66,48 +81,42 @@ print(
 settings.update({"mlflow": False})
 
 
+@contextmanager
+def single_class_labels(labels_dir: str, image_paths: list):
+    backup = Path(labels_dir).parent / "_labels_backup"
+    shutil.move(labels_dir, backup)
+    Path(labels_dir).mkdir()
+    try:
+        for img_path in image_paths:
+            label_path = Path(get_label_path_from_image(img_path, str(backup)))
+            labels = get_label_from_image(img_path, str(backup), convert_xyxy=False)
+            single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
+            write_labels_to_file(single_class, Path(labels_dir) / label_path.name)
+        yield
+    finally:
+        shutil.rmtree(labels_dir)
+        shutil.move(str(backup), labels_dir)
+
+
 def main():
     yolo = YOLO(RUN_CONFIG["YOLO"]["model_id"])
     model = AutoModelForImageTextToText.from_pretrained(
-        RUN_CONFIG["model_id"],
+        RUN_CONFIG["QWEN"]["model_id"],
         dtype=torch.bfloat16,
         attn_implementation="flash_attention_2",
         device_map=DEVICE,
         trust_remote_code=True,
     ).eval()
 
-    processor = AutoProcessor.from_pretrained(RUN_CONFIG["YOLO"]["model_id"])
+    processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
-    image_paths = get_images_from_dir(IMAGE_DIR)
-    RUN_CONFIG["valid_images"] = len(image_paths)
+    image_paths = get_images_from_dir(TRAIN_IMAGES_DIR)
 
-    # create a new folder with all classes set to 1
-    labels = [
-        (
-            get_label_from_image(img_path, LABEL_DIR),
-            Image.open(img_path).convert("RGB").width,
-            Image.open(img_path).convert("RGB").height,
-        )
-        for img_path in image_paths
-    ]
-    reset_labels = [
-        {"class_id": 0, "box": xyxy_to_yolo(label[0]["box"], label[1], label[2])}
-        for label in labels
-    ]
-    output_label_dir = Path(LABEL_DIR).parent / "single_class_labels"
-    if os.path.exists(output_label_dir):
-        raise FileExistsError(
-            f"Directory {output_label_dir} exists!\nPlease delete or remove."
-        )
-    for label in reset_labels:
-        
+    RUN_CONFIG["single_class_train"] = True
 
-    with mlflow.start_run(
-        run_name=(
-            RUN_CONFIG["MLFLOW_RUN"] if RUN_CONFIG["MLFLOW_RUN"] is not None else None
-        )
+    with single_class_labels(TRAIN_LABELS_DIR, image_paths), mlflow.start_run(
+        run_name=RUN_CONFIG["MLFLOW_RUN"] or None
     ):
-
         mlflow.log_params(RUN_CONFIG)
         if RUN_CONFIG["YOLO"]["train"]:
             yolo, train_results = train_yolo(
@@ -123,16 +132,50 @@ def main():
             log_yolo_mlflow(yolo)
 
         if RUN_CONFIG["YOLO"]["eval"]:
+            valid_images = get_images_from_dir(VALID_IMAGES_DIR)
+
             labels = [
-                get_label_from_image(img_path, LABEL_DIR) for img_path in image_paths
+                get_label_from_image(img_path, VALID_LABELS_DIR, convert_xyxy=True)
+                for img_path in valid_images
             ]
             all_targets = [prepare_targets(label)[0] for label in labels]
-            all_preds = run_yolo_batch_inference(image_paths, yolo)
+            all_preds = run_yolo_batch_inference(valid_images, yolo)
 
             assert len(all_targets) == len(all_preds)
 
+            # crop image and then ask Qwen to classify
+            final_preds = []
+            for val_img_path, pred in zip(valid_images, all_preds):
+                image = Image.open(val_img_path).convert("RGB")
+                scores = []
+                pred_labels = []
+                for box in pred["boxes"].tolist():
+                    cropped_image = image.crop(box)
+                    with tempfile.NamedTemporaryFile() as tmp:
+                        cropped_image.save(tmp)
+                        qwen_pred = run_qwen_classification_inference(
+                            tmp,
+                            processor,
+                            model,
+                            RUN_CONFIG["classification_prompt"],
+                            class_to_id=CLASS_TO_ID,
+                        )[0]
+                    if qwen_pred["scores"].numel() == 0:
+                        continue
+                    best = qwen_pred["scores"].argmax()
+                    scores.append(qwen_pred["scores"][best].item())
+                    pred_labels.append(qwen_pred["labels"][best].item())
+
+                final_preds.append(
+                    {
+                        "boxes": pred["boxes"],
+                        "scores": torch.tensor(scores, dtype=torch.float32),
+                        "labels": torch.tensor(pred_labels, dtype=torch.int64),
+                    }
+                )
+
             summary = evaluate_yolo_style(
-                preds=all_preds,
+                preds=final_preds,
                 targets=all_targets,
                 iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
                 conf_thresholds=RUN_CONFIG["conf_thresholds"],
