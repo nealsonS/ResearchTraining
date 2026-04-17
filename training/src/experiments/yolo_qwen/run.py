@@ -1,9 +1,14 @@
 from dotenv import load_dotenv
 import torch
+from PIL import Image
+from pathlib import Path
+
 from ultralytics import YOLO, settings
 import mlflow
 import os
 import numpy as np
+
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 import yaml
 
@@ -13,7 +18,9 @@ from ResearchTraining.util.io import (
     get_images_from_dir,
     get_label_from_image,
     prepare_targets,
+    xyxy_to_yolo,
 )
+
 from ResearchTraining.models.yolo import (
     train_yolo,
     log_yolo_mlflow,
@@ -60,16 +67,46 @@ settings.update({"mlflow": False})
 
 
 def main():
-
     yolo = YOLO(RUN_CONFIG["YOLO"]["model_id"])
+    model = AutoModelForImageTextToText.from_pretrained(
+        RUN_CONFIG["model_id"],
+        dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+        device_map=DEVICE,
+        trust_remote_code=True,
+    ).eval()
+
+    processor = AutoProcessor.from_pretrained(RUN_CONFIG["YOLO"]["model_id"])
+
+    image_paths = get_images_from_dir(IMAGE_DIR)
+    RUN_CONFIG["valid_images"] = len(image_paths)
+
+    # create a new folder with all classes set to 1
+    labels = [
+        (
+            get_label_from_image(img_path, LABEL_DIR),
+            Image.open(img_path).convert("RGB").width,
+            Image.open(img_path).convert("RGB").height,
+        )
+        for img_path in image_paths
+    ]
+    reset_labels = [
+        {"class_id": 0, "box": xyxy_to_yolo(label[0]["box"], label[1], label[2])}
+        for label in labels
+    ]
+    output_label_dir = Path(LABEL_DIR).parent / "single_class_labels"
+    if os.path.exists(output_label_dir):
+        raise FileExistsError(
+            f"Directory {output_label_dir} exists!\nPlease delete or remove."
+        )
+    for label in reset_labels:
+        
 
     with mlflow.start_run(
         run_name=(
             RUN_CONFIG["MLFLOW_RUN"] if RUN_CONFIG["MLFLOW_RUN"] is not None else None
         )
     ):
-        image_paths = get_images_from_dir(IMAGE_DIR)
-        RUN_CONFIG["valid_images"] = len(image_paths)
 
         mlflow.log_params(RUN_CONFIG)
         if RUN_CONFIG["YOLO"]["train"]:

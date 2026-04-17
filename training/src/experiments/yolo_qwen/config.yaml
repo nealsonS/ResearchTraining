@@ -9,7 +9,7 @@ conf_thresholds:
   - 0.9
 
 YOLO:
-  model_id: "yolo26n.pt"
+  model_id: "yolo26s.pt"
   epochs: 20
   imgsz: 640
   batch_size: 16
@@ -17,6 +17,9 @@ YOLO:
   train: true
   eval: true
 
-MLFLOW_EXPERIMENT_NAME: "YOLO"
-MLFLOW_RUN: "Yolo 1"
+QWEN:
+  model_id: "Qwen/Qwen3-VL-2B-Instruct"
+
+MLFLOW_EXPERIMENT_NAME: "YOLO QWEN"
+MLFLOW_RUN: "Yolo Qwen 1"
 

@@ -4,13 +4,15 @@ import torch
 import mlflow
 
 
-def train_yolo(model: YOLO, data_yaml_path: str, epochs: int, imgsz: int):
+def train_yolo(
+    model: YOLO, data_yaml_path: str, epochs: int, imgsz: int, batch_size: int
+):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if not Path(data_yaml_path).exists():
         raise FileNotFoundError(f"{data_yaml_path} not found")
 
     train_results = model.train(
-        data=data_yaml_path, epochs=epochs, imgsz=imgsz, device=device
+        data=data_yaml_path, epochs=epochs, imgsz=imgsz, batch=batch_size, device=device
     )
 
     return model, train_results
