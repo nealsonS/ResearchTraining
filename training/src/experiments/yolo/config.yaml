@@ -1,6 +1,3 @@
-train_images: "../../data/combined_reannotated/train/images"
-train_labels: "../../data/combined_reannotated/train/labels"
-
 valid_images: "../../data/combined_reannotated/valid/images"
 valid_labels: "../../data/combined_reannotated/valid/labels"
 
@@ -13,7 +10,7 @@ conf_thresholds:
   - 0.9
 
 YOLO:
-  model_id: "yolo26n.pt"
+  model_id: "yolo26m.pt"
   epochs: 20
   imgsz: 640
   batch_size: 16

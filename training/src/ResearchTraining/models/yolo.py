@@ -4,12 +4,26 @@ import torch
 import mlflow
 
 
+def _log_train_epoch(trainer):
+    epoch = trainer.epoch
+    losses = dict(zip(trainer.loss_names, trainer.loss_items))
+    mlflow.log_metrics({f"train/{k}": float(v) for k, v in losses.items()}, step=epoch)
+
+
+def _log_val_epoch(trainer):
+    epoch = trainer.epoch
+    mlflow.log_metrics({f"val/{k}": float(v) for k, v in trainer.metrics.items()}, step=epoch)
+
+
 def train_yolo(
     model: YOLO, data_yaml_path: str, epochs: int, imgsz: int, batch_size: int
 ):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if not Path(data_yaml_path).exists():
         raise FileNotFoundError(f"{data_yaml_path} not found")
+
+    model.add_callback("on_train_epoch_end", _log_train_epoch)
+    model.add_callback("on_fit_epoch_end", _log_val_epoch)
 
     train_results = model.train(
         data=data_yaml_path, epochs=epochs, imgsz=imgsz, batch=batch_size, device=device

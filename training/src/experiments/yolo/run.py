@@ -30,8 +30,8 @@ with open("./config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
 
 print("Configurating...")
-IMAGE_DIR = RUN_CONFIG["image_dir"]
-LABEL_DIR = RUN_CONFIG["label_dir"]
+IMAGE_DIR = RUN_CONFIG["valid_images"]
+LABEL_DIR = RUN_CONFIG["valid_labels"]
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
 
 CLASS_NAMES = get_cls(DATA_CONFIG, clean=True)
