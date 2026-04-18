@@ -198,6 +198,7 @@ def main():
                 image = Image.open(val_img_path).convert("RGB")
                 scores = []
                 pred_labels = []
+                kept_boxes = []
                 for box in pred["boxes"].tolist():
                     cropped_image = image.crop(box)
                     with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
@@ -214,10 +215,11 @@ def main():
                     best = qwen_pred["scores"].argmax()
                     scores.append(qwen_pred["scores"][best].item())
                     pred_labels.append(qwen_pred["labels"][best].item())
+                    kept_boxes.append(box)
 
                 final_preds.append(
                     {
-                        "boxes": pred["boxes"],
+                        "boxes": torch.tensor(kept_boxes, dtype=torch.float32) if kept_boxes else torch.empty((0, 4), dtype=torch.float32),
                         "scores": torch.tensor(scores, dtype=torch.float32),
                         "labels": torch.tensor(pred_labels, dtype=torch.int64),
                     }
