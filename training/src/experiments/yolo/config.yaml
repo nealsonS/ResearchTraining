@@ -17,6 +17,7 @@ YOLO:
   save_model: false
   train: true
   eval: true
+  log_predictions: false
 
 MLFLOW_EXPERIMENT_NAME: "YOLO"
 MLFLOW_RUN: "Yolo 1"

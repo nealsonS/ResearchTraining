@@ -210,6 +210,37 @@ def evaluate_yolo_style(
     return output
 
 
+def log_predictions_to_mlflow(
+    image_paths: list[str],
+    preds: list[dict],
+    targets: list[dict],
+    id_to_class: dict[int, str],
+) -> None:
+    rows = []
+    for img_path, pred, target in zip(image_paths, preds, targets):
+        for box, score, label in zip(
+            pred["boxes"].tolist(),
+            pred["scores"].tolist(),
+            pred["labels"].tolist(),
+        ):
+            rows.append({
+                "image": img_path,
+                "type": "pred",
+                "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
+                "score": score,
+                "label": id_to_class.get(label, label),
+            })
+        for box, label in zip(target["boxes"].tolist(), target["labels"].tolist()):
+            rows.append({
+                "image": img_path,
+                "type": "gt",
+                "x1": box[0], "y1": box[1], "x2": box[2], "y2": box[3],
+                "score": None,
+                "label": id_to_class.get(label, label),
+            })
+    mlflow.log_table(rows, artifact_file="val_predictions.json")
+
+
 def log_results_to_mlflow(
     summary: dict[float, dict], ID_TO_CLASS: dict[int, str]
 ) -> None:

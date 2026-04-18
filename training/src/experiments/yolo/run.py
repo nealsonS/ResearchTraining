@@ -20,7 +20,11 @@ from ResearchTraining.models.yolo import (
     run_yolo_batch_inference,
 )
 
-from ResearchTraining.metrics import evaluate_yolo_style, log_results_to_mlflow
+from ResearchTraining.metrics import (
+    evaluate_yolo_style,
+    log_results_to_mlflow,
+    log_predictions_to_mlflow,
+)
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -69,7 +73,7 @@ def main():
         )
     ):
         image_paths = get_images_from_dir(IMAGE_DIR)
-        RUN_CONFIG["valid_images"] = len(image_paths)
+        RUN_CONFIG["valid_images_count"] = len(image_paths)
 
         mlflow.log_params(RUN_CONFIG)
         if RUN_CONFIG["YOLO"]["train"]:
@@ -93,6 +97,9 @@ def main():
             all_preds = run_yolo_batch_inference(image_paths, yolo)
 
             assert len(all_targets) == len(all_preds)
+
+        if RUN_CONFIG["log_predictions"]:
+            log_predictions_to_mlflow(image_paths, all_preds, all_targets, ID_TO_CLASS)
 
             summary = evaluate_yolo_style(
                 preds=all_preds,

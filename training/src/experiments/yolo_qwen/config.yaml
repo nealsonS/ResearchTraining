@@ -26,4 +26,5 @@ QWEN:
 
 MLFLOW_EXPERIMENT_NAME: "YOLO QWEN"
 MLFLOW_RUN: "Yolo Qwen 1"
+log_predictions: true
 

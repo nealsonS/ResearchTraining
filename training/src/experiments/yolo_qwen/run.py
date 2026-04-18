@@ -36,7 +36,11 @@ from ResearchTraining.models.qwen import (
     run_qwen_classification_inference,
 )
 
-from ResearchTraining.metrics import evaluate_yolo_style, log_results_to_mlflow
+from ResearchTraining.metrics import (
+    evaluate_yolo_style,
+    log_results_to_mlflow,
+    log_predictions_to_mlflow,
+)
 
 # ---------------- CONFIG ----------------
 load_dotenv()
@@ -219,10 +223,19 @@ def main():
 
                 final_preds.append(
                     {
-                        "boxes": torch.tensor(kept_boxes, dtype=torch.float32) if kept_boxes else torch.empty((0, 4), dtype=torch.float32),
+                        "boxes": (
+                            torch.tensor(kept_boxes, dtype=torch.float32)
+                            if kept_boxes
+                            else torch.empty((0, 4), dtype=torch.float32)
+                        ),
                         "scores": torch.tensor(scores, dtype=torch.float32),
                         "labels": torch.tensor(pred_labels, dtype=torch.int64),
                     }
+                )
+
+            if RUN_CONFIG["log_predictions"]:
+                log_predictions_to_mlflow(
+                    valid_image_paths, final_preds, all_targets, ID_TO_CLASS
                 )
 
             summary = evaluate_yolo_style(
