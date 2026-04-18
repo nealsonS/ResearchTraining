@@ -137,6 +137,9 @@ def evaluate_yolo_style(
     mAP50 and mAP50-95 are confidence-threshold independent and computed once
     over all predictions (AUC of precision-recall curve).
     """
+    preds = [{k: v.cpu() for k, v in p.items()} for p in preds]
+    targets = [{k: v.cpu() for k, v in t.items()} for t in targets]
+
     # mAP is independent of confidence threshold — compute once
     metric_map50 = MeanAveragePrecision(
         box_format="xyxy",
