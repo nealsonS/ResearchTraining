@@ -86,4 +86,4 @@ def run_yolo_batch_inference(image_paths: list[str], model: YOLO):
 
 
 def log_yolo_mlflow(model: YOLO):
-    mlflow.log_artifact(model.trainier.best)
+    mlflow.log_artifact(model.trainer.best)
