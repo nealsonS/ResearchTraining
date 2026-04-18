@@ -142,7 +142,7 @@ def prepare_targets(label: list[dict]):
 
 
 def write_labels_to_file(labels: dict, dest: str):
-    if Path(dest).exists:
+    if Path(dest).exists():
         raise FileExistsError(f"file {dest} exists!")
 
     lines = [
