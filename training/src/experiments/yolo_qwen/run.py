@@ -82,20 +82,28 @@ settings.update({"mlflow": False})
 
 
 @contextmanager
-def single_class_labels(labels_dir: str, image_paths: list):
+def single_class_labels(labels_dir: str, image_paths: list, data_config: str):
+    original_data = yaml.safe_load(Path(data_config).read_text())
+    single_class_data = {**original_data, "names": {0: "object"}, "nc": 1}
+
     backup = Path(labels_dir).parent / "_labels_backup"
     shutil.move(labels_dir, backup)
     Path(labels_dir).mkdir()
+
+    tmp_yaml = Path(data_config).parent / "_single_class_data.yaml"
+    tmp_yaml.write_text(yaml.dump(single_class_data))
+
     try:
         for img_path in image_paths:
             label_path = Path(get_label_path_from_image(img_path, str(backup)))
             labels = get_label_from_image(img_path, str(backup), convert_xyxy=False)
             single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
             write_labels_to_file(single_class, Path(labels_dir) / label_path.name)
-        yield
+        yield str(tmp_yaml)
     finally:
         shutil.rmtree(labels_dir)
         shutil.move(str(backup), labels_dir)
+        tmp_yaml.unlink(missing_ok=True)
 
 
 def main():
@@ -114,14 +122,14 @@ def main():
 
     RUN_CONFIG["single_class_train"] = True
 
-    with single_class_labels(TRAIN_LABELS_DIR, image_paths), mlflow.start_run(
+    with single_class_labels(TRAIN_LABELS_DIR, image_paths, RUN_CONFIG["data_config"]) as single_class_data_config, mlflow.start_run(
         run_name=RUN_CONFIG["MLFLOW_RUN"] or None
     ):
         mlflow.log_params(RUN_CONFIG)
         if RUN_CONFIG["YOLO"]["train"]:
             yolo, train_results = train_yolo(
                 yolo,
-                RUN_CONFIG["data_config"],
+                single_class_data_config,
                 RUN_CONFIG["YOLO"]["epochs"],
                 RUN_CONFIG["YOLO"]["imgsz"],
                 RUN_CONFIG["YOLO"]["batch_size"],
@@ -151,7 +159,7 @@ def main():
                 pred_labels = []
                 for box in pred["boxes"].tolist():
                     cropped_image = image.crop(box)
-                    with tempfile.NamedTemporaryFile() as tmp:
+                    with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
                         cropped_image.save(tmp)
                         qwen_pred = run_qwen_classification_inference(
                             tmp,
