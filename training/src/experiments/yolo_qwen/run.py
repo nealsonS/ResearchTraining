@@ -46,11 +46,11 @@ with open("./config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
 
 print("Configurating...")
-TRAIN_IMAGES_DIR = RUN_CONFIG["TRAIN_IMAGES"]
-TRAIN_LABELS_DIR = RUN_CONFIG["TRAIN_LABELS"]
+TRAIN_IMAGES_DIR = RUN_CONFIG["train_images"]
+TRAIN_LABELS_DIR = RUN_CONFIG["train_labels"]
 
-VALID_IMAGES_DIR = RUN_CONFIG["VALID_IMAGES"]
-VALID_LABELS_DIR = RUN_CONFIG["VALID_LABELS"]
+VALID_IMAGES_DIR = RUN_CONFIG["valid_images"]
+VALID_LABELS_DIR = RUN_CONFIG["valid_labels"]
 
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
 
