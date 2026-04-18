@@ -146,7 +146,7 @@ def write_labels_to_file(labels: dict, dest: str):
         raise FileExistsError(f"file {dest} exists!")
 
     lines = [
-        f"{label['class_id']} {' '.join(label['box'])}".strip() for label in labels
+        f"{label['class_id']} {' '.join(str(v) for v in label['box'])}".strip() for label in labels
     ]
     lines_str = "\n".join(lines)
     with open(dest, "w") as f:
