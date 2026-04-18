@@ -49,7 +49,7 @@ print("Configurating...")
 TRAIN_IMAGES_DIR = RUN_CONFIG["train_images"]
 TRAIN_LABELS_DIR = RUN_CONFIG["train_labels"]
 
-VALID_IMAGES_DIR = RUN_CONFIG["valid_images"]
+VALID_IMAGES_DIR = RUN_CONFIG["valid_image_paths"]
 VALID_LABELS_DIR = RUN_CONFIG["valid_labels"]
 
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
@@ -119,7 +119,8 @@ def single_class_labels(
                 single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
                 write_labels_to_file(single_class, Path(valid_labels_dir) / label_path.name)
 
-        yield str(tmp_yaml)
+        original_valid_labels = str(valid_backup) if valid_backup is not None else valid_labels_dir
+        yield str(tmp_yaml), original_valid_labels
     finally:
         shutil.rmtree(labels_dir)
         shutil.move(str(backup), labels_dir)
@@ -152,7 +153,7 @@ def main():
         RUN_CONFIG["data_config"],
         valid_labels_dir=VALID_LABELS_DIR,
         valid_image_paths=valid_image_paths,
-    ) as single_class_data_config, mlflow.start_run(
+    ) as (single_class_data_config, original_valid_labels_dir), mlflow.start_run(
         run_name=RUN_CONFIG["MLFLOW_RUN"] or None
     ):
         mlflow.log_params(RUN_CONFIG)
@@ -170,29 +171,27 @@ def main():
             log_yolo_mlflow(yolo)
 
         if RUN_CONFIG["YOLO"]["eval"]:
-            valid_images = get_images_from_dir(VALID_IMAGES_DIR)
-
             labels = [
-                get_label_from_image(img_path, VALID_LABELS_DIR, convert_xyxy=True)
-                for img_path in valid_images
+                get_label_from_image(img_path, original_valid_labels_dir, convert_xyxy=True)
+                for img_path in valid_image_paths
             ]
             all_targets = [prepare_targets(label)[0] for label in labels]
-            all_preds = run_yolo_batch_inference(valid_images, yolo)
+            all_preds = run_yolo_batch_inference(valid_image_paths, yolo)
 
             assert len(all_targets) == len(all_preds)
 
             # crop image and then ask Qwen to classify
             final_preds = []
-            for val_img_path, pred in zip(valid_images, all_preds):
+            for val_img_path, pred in zip(valid_image_paths, all_preds):
                 image = Image.open(val_img_path).convert("RGB")
                 scores = []
                 pred_labels = []
                 for box in pred["boxes"].tolist():
                     cropped_image = image.crop(box)
                     with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
-                        cropped_image.save(tmp)
+                        cropped_image.save(tmp.name)
                         qwen_pred = run_qwen_classification_inference(
-                            tmp,
+                            tmp.name,
                             processor,
                             model,
                             RUN_CONFIG["classification_prompt"],

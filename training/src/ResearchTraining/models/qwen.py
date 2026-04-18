@@ -238,7 +238,6 @@ def run_qwen_classification_inference(
     )[0]
     parsed = parse_output_to_json(output_text)
 
-    boxes = []
     labels = []
     scores = []
 
@@ -260,7 +259,7 @@ def run_qwen_classification_inference(
         labels.append(class_to_id[label])
         scores.append(score)
 
-    if len(boxes) == 0:
+    if len(labels) == 0:
         return [
             {
                 "scores": torch.empty((0,), dtype=torch.float32),
