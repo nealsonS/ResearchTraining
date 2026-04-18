@@ -10,9 +10,16 @@ def _log_train_epoch(trainer):
     mlflow.log_metrics({f"train/{k}": float(v) for k, v in losses.items()}, step=epoch)
 
 
+def _sanitize_metric_name(name: str) -> str:
+    return name.replace("(", "_").replace(")", "")
+
+
 def _log_val_epoch(trainer):
     epoch = trainer.epoch
-    mlflow.log_metrics({f"val/{k}": float(v) for k, v in trainer.metrics.items()}, step=epoch)
+    mlflow.log_metrics(
+        {f"val/{_sanitize_metric_name(k)}": float(v) for k, v in trainer.metrics.items()},
+        step=epoch,
+    )
 
 
 def train_yolo(
