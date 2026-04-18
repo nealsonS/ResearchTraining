@@ -82,13 +82,25 @@ settings.update({"mlflow": False})
 
 
 @contextmanager
-def single_class_labels(labels_dir: str, image_paths: list, data_config: str):
+def single_class_labels(
+    labels_dir: str,
+    image_paths: list,
+    data_config: str,
+    valid_labels_dir: str | None = None,
+    valid_image_paths: list | None = None,
+):
     original_data = yaml.safe_load(Path(data_config).read_text())
     single_class_data = {**original_data, "names": {0: "object"}, "nc": 1}
 
     backup = Path(labels_dir).parent / "_labels_backup"
     shutil.move(labels_dir, backup)
     Path(labels_dir).mkdir()
+
+    valid_backup = None
+    if valid_labels_dir is not None and valid_image_paths is not None:
+        valid_backup = Path(valid_labels_dir).parent / "_valid_labels_backup"
+        shutil.move(valid_labels_dir, valid_backup)
+        Path(valid_labels_dir).mkdir()
 
     tmp_yaml = Path(data_config).parent / "_single_class_data.yaml"
     tmp_yaml.write_text(yaml.dump(single_class_data))
@@ -99,10 +111,21 @@ def single_class_labels(labels_dir: str, image_paths: list, data_config: str):
             labels = get_label_from_image(img_path, str(backup), convert_xyxy=False)
             single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
             write_labels_to_file(single_class, Path(labels_dir) / label_path.name)
+
+        if valid_backup is not None:
+            for img_path in valid_image_paths:
+                label_path = Path(get_label_path_from_image(img_path, str(valid_backup)))
+                labels = get_label_from_image(img_path, str(valid_backup), convert_xyxy=False)
+                single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
+                write_labels_to_file(single_class, Path(valid_labels_dir) / label_path.name)
+
         yield str(tmp_yaml)
     finally:
         shutil.rmtree(labels_dir)
         shutil.move(str(backup), labels_dir)
+        if valid_backup is not None:
+            shutil.rmtree(valid_labels_dir)
+            shutil.move(str(valid_backup), valid_labels_dir)
         tmp_yaml.unlink(missing_ok=True)
 
 
@@ -119,10 +142,17 @@ def main():
     processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
     image_paths = get_images_from_dir(TRAIN_IMAGES_DIR)
+    valid_image_paths = get_images_from_dir(VALID_IMAGES_DIR)
 
     RUN_CONFIG["single_class_train"] = True
 
-    with single_class_labels(TRAIN_LABELS_DIR, image_paths, RUN_CONFIG["data_config"]) as single_class_data_config, mlflow.start_run(
+    with single_class_labels(
+        TRAIN_LABELS_DIR,
+        image_paths,
+        RUN_CONFIG["data_config"],
+        valid_labels_dir=VALID_LABELS_DIR,
+        valid_image_paths=valid_image_paths,
+    ) as single_class_data_config, mlflow.start_run(
         run_name=RUN_CONFIG["MLFLOW_RUN"] or None
     ):
         mlflow.log_params(RUN_CONFIG)
