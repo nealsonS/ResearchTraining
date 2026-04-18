@@ -49,7 +49,7 @@ print("Configurating...")
 TRAIN_IMAGES_DIR = RUN_CONFIG["train_images"]
 TRAIN_LABELS_DIR = RUN_CONFIG["train_labels"]
 
-VALID_IMAGES_DIR = RUN_CONFIG["valid_image_paths"]
+VALID_IMAGES_DIR = RUN_CONFIG["valid_images"]
 VALID_LABELS_DIR = RUN_CONFIG["valid_labels"]
 
 DATA_CONFIG = read_data_config(RUN_CONFIG["data_config"])
@@ -114,12 +114,20 @@ def single_class_labels(
 
         if valid_backup is not None:
             for img_path in valid_image_paths:
-                label_path = Path(get_label_path_from_image(img_path, str(valid_backup)))
-                labels = get_label_from_image(img_path, str(valid_backup), convert_xyxy=False)
+                label_path = Path(
+                    get_label_path_from_image(img_path, str(valid_backup))
+                )
+                labels = get_label_from_image(
+                    img_path, str(valid_backup), convert_xyxy=False
+                )
                 single_class = [{"class_id": 0, "box": lbl["box"]} for lbl in labels]
-                write_labels_to_file(single_class, Path(valid_labels_dir) / label_path.name)
+                write_labels_to_file(
+                    single_class, Path(valid_labels_dir) / label_path.name
+                )
 
-        original_valid_labels = str(valid_backup) if valid_backup is not None else valid_labels_dir
+        original_valid_labels = (
+            str(valid_backup) if valid_backup is not None else valid_labels_dir
+        )
         yield str(tmp_yaml), original_valid_labels
     finally:
         shutil.rmtree(labels_dir)
@@ -142,14 +150,16 @@ def main():
 
     processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
-    image_paths = get_images_from_dir(TRAIN_IMAGES_DIR)
+    train_image_paths = get_images_from_dir(TRAIN_IMAGES_DIR)
     valid_image_paths = get_images_from_dir(VALID_IMAGES_DIR)
 
     RUN_CONFIG["single_class_train"] = True
+    RUN_CONFIG["num_train_images"] = len(train_image_paths)
+    RUN_CONFIG["num_validimages"] = len(valid_image_paths)
 
     with single_class_labels(
         TRAIN_LABELS_DIR,
-        image_paths,
+        train_image_paths,
         RUN_CONFIG["data_config"],
         valid_labels_dir=VALID_LABELS_DIR,
         valid_image_paths=valid_image_paths,
@@ -172,7 +182,9 @@ def main():
 
         if RUN_CONFIG["YOLO"]["eval"]:
             labels = [
-                get_label_from_image(img_path, original_valid_labels_dir, convert_xyxy=True)
+                get_label_from_image(
+                    img_path, original_valid_labels_dir, convert_xyxy=True
+                )
                 for img_path in valid_image_paths
             ]
             all_targets = [prepare_targets(label)[0] for label in labels]
