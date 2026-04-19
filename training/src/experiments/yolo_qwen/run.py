@@ -144,15 +144,6 @@ def single_class_labels(
 
 def main():
     yolo = YOLO(RUN_CONFIG["YOLO"]["model_id"])
-    model = AutoModelForImageTextToText.from_pretrained(
-        RUN_CONFIG["QWEN"]["model_id"],
-        dtype=torch.bfloat16,
-        attn_implementation="flash_attention_2",
-        device_map=DEVICE,
-        trust_remote_code=True,
-    ).eval()
-
-    processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
     train_image_paths = get_images_from_dir(TRAIN_IMAGES_DIR)
     valid_image_paths = get_images_from_dir(VALID_IMAGES_DIR)
@@ -195,7 +186,18 @@ def main():
             all_preds = run_yolo_batch_inference(
                 valid_image_paths, yolo, RUN_CONFIG["YOLO"]["inference_batch_size"]
             )
+            del yolo
             torch.cuda.empty_cache()
+
+            model = AutoModelForImageTextToText.from_pretrained(
+                RUN_CONFIG["QWEN"]["model_id"],
+                dtype=torch.bfloat16,
+                attn_implementation="flash_attention_2",
+                device_map=DEVICE,
+                trust_remote_code=True,
+            ).eval()
+
+            processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
             assert len(all_targets) == len(all_preds)
 
