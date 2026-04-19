@@ -17,6 +17,7 @@ YOLO:
   epochs: 20
   imgsz: 640
   batch_size: 16
+  inference_batch_size: 8
   save_model: false
   train: true
   eval: true

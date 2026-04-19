@@ -94,20 +94,20 @@ def main():
                 get_label_from_image(img_path, LABEL_DIR) for img_path in image_paths
             ]
             all_targets = [prepare_targets(label)[0] for label in labels]
-            all_preds = run_yolo_batch_inference(image_paths, yolo)
+            all_preds = run_yolo_batch_inference(image_paths, yolo, RUN_CONFIG["YOLO"]["inference_batch_size"])
 
             assert len(all_targets) == len(all_preds)
 
         if RUN_CONFIG["log_predictions"]:
             log_predictions_to_mlflow(image_paths, all_preds, all_targets, ID_TO_CLASS)
 
-            summary = evaluate_yolo_style(
-                preds=all_preds,
-                targets=all_targets,
-                iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
-                conf_thresholds=RUN_CONFIG["conf_thresholds"],
-            )
-            log_results_to_mlflow(summary, ID_TO_CLASS=ID_TO_CLASS)
+        summary = evaluate_yolo_style(
+            preds=all_preds,
+            targets=all_targets,
+            iou_thresholds=list(np.arange(0.5, 0.96, 0.05)),
+            conf_thresholds=RUN_CONFIG["conf_thresholds"],
+        )
+        log_results_to_mlflow(summary, ID_TO_CLASS=ID_TO_CLASS)
 
 
 if __name__ == "__main__":

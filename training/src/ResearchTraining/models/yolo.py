@@ -60,28 +60,27 @@ def run_yolo_inference(image_path: str, model: YOLO):
     ]
 
 
-def run_yolo_batch_inference(image_paths: list[str], model: YOLO):
-    results = model(image_paths)
+def run_yolo_batch_inference(image_paths: list[str], model: YOLO, batch_size: int = 8):
     all_preds = []
-    for r in results:
-        boxes = r.boxes
-        if boxes is None or boxes.xyxy.numel() == 0:
-            pred = [
-                {
+    for i in range(0, len(image_paths), batch_size):
+        chunk = image_paths[i : i + batch_size]
+        results = model(chunk, half=torch.cuda.is_available())
+        for r in results:
+            boxes = r.boxes
+            if boxes is None or boxes.xyxy.numel() == 0:
+                pred = {
                     "boxes": torch.empty((0, 4), dtype=torch.float32),
                     "scores": torch.empty((0,), dtype=torch.float32),
                     "labels": torch.empty((0,), dtype=torch.int64),
                 }
-            ]
-        else:
-            pred = [
-                {
-                    "boxes": boxes.xyxy.to(dtype=torch.float32),
-                    "scores": boxes.conf.to(dtype=torch.float32),
-                    "labels": boxes.cls.to(dtype=torch.int64),
+            else:
+                pred = {
+                    "boxes": boxes.xyxy.cpu().to(dtype=torch.float32),
+                    "scores": boxes.conf.cpu().to(dtype=torch.float32),
+                    "labels": boxes.cls.cpu().to(dtype=torch.int64),
                 }
-            ]
-        all_preds.extend(pred)
+            all_preds.append(pred)
+        torch.cuda.empty_cache()
     return all_preds
 
 

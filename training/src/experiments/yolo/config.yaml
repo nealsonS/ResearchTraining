@@ -10,15 +10,17 @@ conf_thresholds:
   - 0.9
 
 YOLO:
-  model_id: "yolo26m.pt"
+  model_id: "best.pt"
   epochs: 20
   imgsz: 640
   batch_size: 16
+  inference_batch_size: 8
   save_model: false
-  train: true
+  train: false
   eval: true
-  log_predictions: false
+
 
 MLFLOW_EXPERIMENT_NAME: "YOLO"
-MLFLOW_RUN: "Yolo 1"
+MLFLOW_RUN: "Yolo Eval"
 
+log_predictions: true

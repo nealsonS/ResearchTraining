@@ -192,7 +192,10 @@ def main():
                 for img_path in valid_image_paths
             ]
             all_targets = [prepare_targets(label)[0] for label in labels]
-            all_preds = run_yolo_batch_inference(valid_image_paths, yolo)
+            all_preds = run_yolo_batch_inference(
+                valid_image_paths, yolo, RUN_CONFIG["YOLO"]["inference_batch_size"]
+            )
+            torch.cuda.empty_cache()
 
             assert len(all_targets) == len(all_preds)
 

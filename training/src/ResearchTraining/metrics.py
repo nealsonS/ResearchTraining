@@ -238,7 +238,7 @@ def log_predictions_to_mlflow(
                 "score": None,
                 "label": id_to_class.get(label, label),
             })
-    mlflow.log_table(rows, artifact_file="val_predictions.json")
+    mlflow.log_table({"data": rows}, artifact_file="val_predictions.json")
 
 
 def log_results_to_mlflow(

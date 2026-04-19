@@ -236,6 +236,8 @@ def run_qwen_classification_inference(
         skip_special_tokens=True,
         clean_up_tokenization_spaces=False,
     )[0]
+    del inputs, generated_ids, generated_ids_trimmed
+    torch.cuda.empty_cache()
     parsed = parse_output_to_json(output_text)
 
     labels = []
