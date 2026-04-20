@@ -4,6 +4,7 @@ import torch
 from PIL import Image
 from pathlib import Path
 
+from tqdm import tqdm
 from ultralytics import YOLO, settings
 import mlflow
 import os
@@ -172,6 +173,7 @@ def main():
             )
             print(train_results)
 
+        # TODO- fix if yolo.trainer doesn't exist when eval only and not train
         if RUN_CONFIG["YOLO"]["save_model"]:
             log_yolo_mlflow(yolo)
 
@@ -200,10 +202,13 @@ def main():
             processor = AutoProcessor.from_pretrained(RUN_CONFIG["QWEN"]["model_id"])
 
             assert len(all_targets) == len(all_preds)
+            assert len(valid_image_paths) == len(all_preds)
 
             # crop image and then ask Qwen to classify
             final_preds = []
-            for val_img_path, pred in zip(valid_image_paths, all_preds):
+            for val_img_path, pred in tqdm(
+                zip(valid_image_paths, all_preds), total=len(valid_image_paths)
+            ):
                 image = Image.open(val_img_path).convert("RGB")
                 scores = []
                 pred_labels = []
