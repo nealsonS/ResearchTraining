@@ -17,7 +17,10 @@ def _sanitize_metric_name(name: str) -> str:
 def _log_val_epoch(trainer):
     epoch = trainer.epoch
     mlflow.log_metrics(
-        {f"val/{_sanitize_metric_name(k)}": float(v) for k, v in trainer.metrics.items()},
+        {
+            f"val/{_sanitize_metric_name(k)}": float(v)
+            for k, v in trainer.metrics.items()
+        },
         step=epoch,
     )
 
@@ -85,4 +88,9 @@ def run_yolo_batch_inference(image_paths: list[str], model: YOLO, batch_size: in
 
 
 def log_yolo_mlflow(model: YOLO):
-    mlflow.log_artifact(model.trainer.best)
+    if model.trainer is not None:
+        mlflow.log_artifact(model.trainer.best)
+    elif model.ckpt_path is not None:
+        mlflow.log_artifact(model.ckpt_path)
+    else:
+        raise ValueError("No model weights path available to log")
