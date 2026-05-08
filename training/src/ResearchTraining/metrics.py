@@ -1,5 +1,7 @@
 import torch
 from collections import defaultdict
+import tempfile
+import os
 
 from torchmetrics.detection import MeanAveragePrecision
 from torchvision.ops import box_iou
@@ -248,7 +250,12 @@ def log_predictions_to_mlflow(
                     "label": id_to_class.get(label, label),
                 }
             )
-    mlflow.log_table(data=pd.DataFrame(rows), artifact_file="predictions.csv")
+    df = pd.DataFrame(rows)
+    mlflow.log_table(data=df, artifact_file="predictions.json")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        csv_path = os.path.join(tmp_dir, "predictions.csv")
+        df.to_csv(csv_path, index=False)
+        mlflow.log_artifact(csv_path)
 
 
 def log_results_to_mlflow(
