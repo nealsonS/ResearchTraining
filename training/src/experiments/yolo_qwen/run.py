@@ -173,7 +173,6 @@ def main():
             )
             print(train_results)
 
-        # TODO- fix if yolo.trainer doesn't exist when eval only and not train
         if RUN_CONFIG["YOLO"]["save_model"]:
             log_yolo_mlflow(yolo)
 

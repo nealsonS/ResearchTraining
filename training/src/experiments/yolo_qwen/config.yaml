@@ -18,7 +18,7 @@ YOLO:
   imgsz: 640
   batch_size: 16
   inference_batch_size: 8
-  save_model: false
+  save_model: true
   train: false
   eval: true
 

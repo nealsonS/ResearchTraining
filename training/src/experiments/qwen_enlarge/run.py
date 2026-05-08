@@ -34,7 +34,7 @@ from ResearchTraining.models.qwen import run_qwen_inference, generate_qwen_promp
 load_dotenv()
 torch.manual_seed(1234)
 
-with open("./eval_config.yaml", "r") as f:
+with open("./config.yaml", "r") as f:
     RUN_CONFIG = yaml.safe_load(f)
 
 print("Configurating...")

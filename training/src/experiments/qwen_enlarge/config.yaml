@@ -1,5 +1,5 @@
-image_dir: "../../data/combined_reannotated/valid_test/images"
-label_dir: "../../data/combined_reannotated/valid_test/labels"
+image_dir: "../../data/combined_reannotated/valid/images"
+label_dir: "../../data/combined_reannotated/valid/labels"
 data_config: "../../data/combined_reannotated/data.yaml"
 
 model_id: "Qwen/Qwen3-VL-2B-Instruct"

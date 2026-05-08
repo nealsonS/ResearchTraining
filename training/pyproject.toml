@@ -18,7 +18,8 @@ dependencies = [
   "accelerate",
   "ipykernel",
   "requests[socks]",
-  "httpx[socks]"
+  "httpx[socks]",
+  "kernels"
 ]
 
 [tool.setuptools.packages.find]
