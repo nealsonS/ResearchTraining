@@ -113,10 +113,18 @@ def main():
             all_preds.append(pred)
             all_targets.append(target)
 
-        if RUN_CONFIG["log_predictions"]:
-            log_predictions_to_mlflow(
-                valid_image_paths, all_preds, all_targets, ID_TO_CLASS
-            )
+        try:
+            if RUN_CONFIG["log_predictions"]:
+                log_predictions_to_mlflow(
+                    valid_image_paths,
+                    all_preds,
+                    all_targets,
+                    ID_TO_CLASS,
+                    draw_pred=RUN_CONFIG["draw_and_log_drawn_predictions"],
+                )
+        except Exception as e:
+            print(f"Failed to log predictions.\nError: {e}")
+            pass
 
         summary = evaluate_yolo_style(
             preds=all_preds,

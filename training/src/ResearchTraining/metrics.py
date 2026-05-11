@@ -9,6 +9,8 @@ from torchvision.ops import box_iou
 import mlflow
 
 import pandas as pd
+from PIL import Image, ImageDraw
+from pathlib import Path
 
 
 def filter_preds_by_score(preds: list[dict], conf_threshold: float) -> list[dict]:
@@ -212,11 +214,47 @@ def evaluate_yolo_style(
     return output
 
 
+def draw_pred_on_image(image_path: str, pred: dict):
+    """Draw predictions on image
+
+    Args:
+        image_path (str): path to image
+        pred (list[dict]): image prediction
+
+    pred:
+        {
+            "boxes": FloatTensor[N, 4],
+            "scores": FloatTensor[N],
+            "labels": Int64Tensor[N],
+        }
+    """
+    try:
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"image {image_path} not found. skipping...")
+        im = Image.open(image_path).convert("RGB")
+        draw = ImageDraw.Draw(im)
+
+        boxes = pred["boxes"].tolist()
+        scores = pred["scores"].tolist()
+        labels = pred["labels"].tolist()
+
+        for box, score, label in zip(boxes, scores, labels):
+            x1, y1, x2, y2 = box
+            draw.rectangle([x1, y1, x2, y2], outline="red", width=2)
+            draw.text((x1, max(0, y1 - 12)), f"{label} {score:.2f}", fill="red")
+
+        return im
+    except Exception as e:
+        print(f"image {image_path} not found with error:\n{e}")
+        return None
+
+
 def log_predictions_to_mlflow(
     image_paths: list[str],
     preds: list[dict],
     targets: list[dict],
     id_to_class: dict[int, str],
+    draw_pred: bool = False,
 ) -> None:
     rows = []
     for img_path, pred, target in zip(image_paths, preds, targets):
@@ -237,6 +275,7 @@ def log_predictions_to_mlflow(
                     "label": id_to_class.get(label, label),
                 }
             )
+
         for box, label in zip(target["boxes"].tolist(), target["labels"].tolist()):
             rows.append(
                 {
@@ -250,6 +289,12 @@ def log_predictions_to_mlflow(
                     "label": id_to_class.get(label, label),
                 }
             )
+        if draw_pred:
+            im = draw_pred_on_image(img_path, pred)
+            output_path = f"drawn_preds/{Path(img_path).stem}.png"
+
+            mlflow.log_image(im, artifact_file=output_path)
+            im.close()
     df = pd.DataFrame(rows)
     mlflow.log_table(data=df, artifact_file="predictions.json")
     with tempfile.TemporaryDirectory() as tmp_dir:

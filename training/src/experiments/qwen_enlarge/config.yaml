@@ -15,3 +15,4 @@ experiment_name: "VLM Inference Dummy"
 
 store_images_and_pred: false
 log_predictions: true
+draw_and_log_drawn_predictions: false
