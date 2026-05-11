@@ -126,19 +126,8 @@ def run_qwen_inference(
         try:
             x1, y1, x2, y2 = [float(x) for x in box]
 
-            # rescale boxes to match original size
-            scale_x = img.width / resized_w
-            scale_y = img.height / resized_h
-
-            x1o = x1 * scale_x
-            y1o = y1 * scale_y
-            x2o = x2 * scale_x
-            y2o = y2 * scale_y
-
-            box = [x1o, y1o, x2o, y2o]
-
-            # qwen assume image is 0-1000
-            box = scale_1000_to_pixels(box, img.width, img.height)
+            # qwen outputs coordinates in 0-1000 space relative to the original image
+            box = scale_1000_to_pixels([x1, y1, x2, y2], img.width, img.height)
 
             score = float(score)
         except Exception:

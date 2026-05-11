@@ -11,8 +11,8 @@ conf_thresholds:
 
 enlarge_by: 3
 
-experiment_name: "VLM Inference Dummy"
+experiment_name: "VLM Inference"
 
-store_images_and_pred: false
+store_images_and_pred: true
 log_predictions: true
-draw_and_log_drawn_predictions: false
+draw_and_log_drawn_predictions: true

@@ -3,6 +3,8 @@ from collections import defaultdict
 import tempfile
 import os
 
+from tqdm import tqdm
+
 from torchmetrics.detection import MeanAveragePrecision
 from torchvision.ops import box_iou
 
@@ -257,7 +259,7 @@ def log_predictions_to_mlflow(
     draw_pred: bool = False,
 ) -> None:
     rows = []
-    for img_path, pred, target in zip(image_paths, preds, targets):
+    for img_path, pred, target in tqdm(zip(image_paths, preds, targets), total=len(image_paths), desc="Logging predictions"):
         for box, score, label in zip(
             pred["boxes"].tolist(),
             pred["scores"].tolist(),
