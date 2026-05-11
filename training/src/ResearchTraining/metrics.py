@@ -334,3 +334,7 @@ def log_results_to_mlflow(
         mlflow.log_table(
             df, artifact_file=f"metrics/per_class_metrics_conf_{conf}.json"
         )
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            csv_path = os.path.join(tmp_dir, f"per_class_metrics_conf_{conf}.csv")
+            df.to_csv(csv_path, index=False)
+            mlflow.log_artifact(csv_path)
